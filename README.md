@@ -6,6 +6,7 @@ Cloud AML platform for Nigerian microfinance banks and fintechs. Product require
 | --- | --- |
 | `backend/` | FastAPI modular monolith, Python 3.14, managed with uv |
 | `frontend/` | Vue 3 and TypeScript, built with Vite |
+| `deploy/` | Environment scripts: local setup notes, staging stack and host provisioning |
 | `docs/` | Architecture decisions |
 | `.github/workflows/` | CI: lint, type checks, tests, dependency audits, secret scan |
 
@@ -14,14 +15,14 @@ Cloud AML platform for Nigerian microfinance banks and fintechs. Product require
 Requires Python 3.14, uv, Node 24 and PostgreSQL 18.
 
 ```bash
-cd backend && uv sync && uv run uvicorn aml.main:app --reload
+cd backend && uv sync && uv run python scripts/setup_local.py && uv run uvicorn aml.main:app --reload
 ```
 
 ```bash
 cd frontend && npm install && npm run dev
 ```
 
-Each folder's README lists the checks CI runs.
+Each folder's README lists the checks CI runs. [deploy/README.md](deploy/README.md) covers local, CI and staging environments.
 
 ## Rules for every change
 

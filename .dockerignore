@@ -1,0 +1,16 @@
+**/node_modules
+**/.venv
+**/__pycache__
+**/.mypy_cache
+**/.ruff_cache
+**/.pytest_cache
+**/.env
+**/.env.*
+!**/.env.example
+**/coverage.xml
+**/.coverage
+frontend/dist
+.git
+deploy
+*.md
+!backend/README.md

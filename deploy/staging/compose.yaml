@@ -1,0 +1,59 @@
+# Staging stack: same layout as one production institution (infrastructure plan).
+# Only the edge proxy publishes ports; the app and database sit on a private network.
+name: aml-staging
+
+services:
+  edge:
+    image: caddy:2.10
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      AML_DOMAIN: ${AML_DOMAIN:?set AML_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [edge]
+    depends_on:
+      app:
+        condition: service_healthy
+
+  app:
+    image: ${AML_IMAGE:?set AML_IMAGE in .env}
+    restart: unless-stopped
+    environment:
+      AML_ENVIRONMENT: staging
+      AML_DATABASE_URL: postgresql://aml_app:${POSTGRES_PASSWORD}@db:5432/aml_control
+    networks: [edge, private]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aml_app
+      POSTGRES_DB: aml_control
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --data-checksums
+    volumes:
+      - db-data:/var/lib/postgresql
+    networks: [private]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aml_app -d aml_control"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  edge:
+  private:
+    internal: true
+
+volumes:
+  caddy-data:
+  caddy-config:
+  db-data:

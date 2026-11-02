@@ -62,6 +62,36 @@ TOTP secrets are encrypted with `AML_MFA_KEY`, which `setup_local.py` generates 
 change it: every enrolled authenticator would stop working. Errors use the problem-details
 shape from the API specification, and every response carries `X-Request-Id`.
 
+## Roles and approvals (ACC-3, ACC-4, RUL-5)
+
+Code asks for a permission, never a role. The matrix in
+`src/aml/modules/access/permissions.py` is the one place that decides who may do what, and
+`GET /v1/auth/me` returns the signed-in user's permissions so screens can adapt. Protect an
+endpoint with `Depends(require(Permission.X))`; a refusal is 403 `PERMISSION_DENIED`.
+
+| Role | May |
+| --- | --- |
+| compliance_officer | view everything, work alerts and cases, approve rule changes, case closures and reports, submit reports, manage users |
+| analyst | work alerts and cases, propose rule changes, ask to close cases, draft reports |
+| administrator | manage users, settings and the fallback approver; no customer data |
+| auditor | view everything, change nothing |
+
+Rule changes, case closures and report submissions go through maker-checker
+(`src/aml/modules/access/approvals.py`). The owning module calls `approvals.submit` with a
+rationale and registers what approval does with `@approvals.on_approved(kind)`; the handler
+runs in the same transaction as the approval. The maker can never decide on their own
+change, which a database CHECK enforces too. An administrator can name one fallback
+approver (an active compliance officer or analyst) who may approve any kind.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /v1/approvals?status=pending` | the queue, newest first |
+| `GET /v1/approvals/{id}` | one request |
+| `POST /v1/approvals/{id}/approve` | `{note?}`; checker only |
+| `POST /v1/approvals/{id}/reject` | `{note}`; checker only |
+| `POST /v1/approvals/{id}/withdraw` | maker only |
+| `GET`/`PUT /v1/approvals/fallback-approver` | `{user_id, rationale}`; administrators |
+
 Checks, as CI runs them:
 
 ```bash

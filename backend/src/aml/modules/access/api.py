@@ -6,7 +6,7 @@ cookie, in the X-CSRF-Token header.
 """
 
 import hmac
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -18,7 +18,8 @@ from pydantic import BaseModel, Field
 
 from aml.config import Settings
 from aml.control.secrets import SecretStore
-from aml.modules.access import security, service
+from aml.modules.access import permissions, security, service
+from aml.modules.access.permissions import Permission
 from aml.modules.access.security import SecretCipher
 from aml.modules.access.service import AuthPolicy, SignInError, User
 from aml.problems import ProblemBody, ProblemError
@@ -102,6 +103,17 @@ def current_user(request: Request, ctx: Context, conn: TenantDb) -> User:
 CurrentUser = Annotated[User, Depends(current_user)]
 
 
+def require(permission: Permission) -> Callable[[User], User]:
+    """Dependency that answers 403 unless the signed-in user's role has ``permission``."""
+
+    def check(user: CurrentUser) -> User:
+        if not permissions.allowed(user.role, permission):
+            raise ProblemError(403, "PERMISSION_DENIED", "Your role cannot do this")
+        return user
+
+    return check
+
+
 def require_csrf(request: Request) -> None:
     token = request.cookies.get(SESSION_COOKIE, "")
     sent = request.headers.get(CSRF_HEADER, "")
@@ -120,10 +132,17 @@ class UserOut(BaseModel):
     email: str
     full_name: str
     role: str
+    permissions: list[str] = Field(description="What the role may do, so screens can adapt")
 
 
 def _user_out(user: User) -> UserOut:
-    return UserOut(id=user.id, email=user.email, full_name=user.full_name, role=user.role)
+    return UserOut(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        role=user.role,
+        permissions=sorted(permissions.ROLE_PERMISSIONS.get(user.role, ())),
+    )
 
 
 @router.post("/sign-in", responses=problems)

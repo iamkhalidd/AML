@@ -1,4 +1,4 @@
-"""Operator command line: aml migrate | status | tenant create/list/drop.
+"""Operator command line: aml migrate | status | tenant create/list/drop | user create.
 
 Run from backend/ so .env is found. Every change is logged in the control plane with the
 operator's name, taken from AML_OPERATOR or the login name.
@@ -10,6 +10,8 @@ import os
 import sys
 from collections.abc import Sequence
 
+import psycopg
+
 from aml.config import Settings
 from aml.control.secrets import SecretStore
 from aml.control.tenants import (
@@ -19,9 +21,12 @@ from aml.control.tenants import (
     create_tenant,
     drop_tenant,
     fleet_status,
+    get_tenant,
     list_tenants,
     migrate_fleet,
 )
+from aml.modules.access.security import SecretCipher
+from aml.modules.access.service import ROLES, AccessError, create_user
 
 
 def build_fleet(settings: Settings) -> Fleet:
@@ -52,7 +57,37 @@ def _parser() -> argparse.ArgumentParser:
     drop = tenant_commands.add_parser("drop", help="delete a tenant (local and test only)")
     drop.add_argument("slug")
     drop.add_argument("--yes", action="store_true", help="confirm deletion")
+    user = commands.add_parser("user", help="manage a tenant's staff users")
+    user_commands = user.add_subparsers(dest="user_command", required=True)
+    create_user_cmd = user_commands.add_parser(
+        "create", help="create a user (the first administrator of a new tenant)"
+    )
+    create_user_cmd.add_argument("slug", help="tenant")
+    create_user_cmd.add_argument("--email", required=True)
+    create_user_cmd.add_argument("--name", required=True, help="full name")
+    create_user_cmd.add_argument("--role", choices=ROLES, default="administrator")
     return parser
+
+
+def _create_user(fleet: Fleet, settings: Settings, args: argparse.Namespace) -> None:
+    if settings.mfa_key is None:
+        raise TenantError("AML_MFA_KEY must be set (run scripts/setup_local.py)")
+    password = getpass.getpass("Password (at least 12 characters): ")
+    if getpass.getpass("Repeat password: ") != password:
+        raise TenantError("Passwords do not match")
+    url = fleet.secrets.get(get_tenant(fleet, args.slug).slug)
+    with psycopg.connect(url) as conn:
+        user, uri = create_user(
+            conn,
+            SecretCipher(settings.mfa_key.get_secret_value()),
+            email=args.email,
+            full_name=args.name,
+            role=args.role,
+            password=password,
+        )
+    print(f"{user.email}: {user.role} created")
+    print("Add this to the user's authenticator app now; it is not shown again:")
+    print(uri)
 
 
 def _print_status(rows: list[DatabaseStatus]) -> None:
@@ -64,23 +99,26 @@ def _print_status(rows: list[DatabaseStatus]) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        fleet = build_fleet(Settings())
+        settings = Settings()
+        fleet = build_fleet(settings)
         if args.command == "migrate":
             _print_status(migrate_fleet(fleet))
         elif args.command == "status":
             _print_status(fleet_status(fleet))
-        elif args.tenant_command == "create":
+        elif args.command == "tenant" and args.tenant_command == "create":
             tenant = create_tenant(fleet, args.slug, args.name)
             print(f"{tenant.slug}: {tenant.status} at {tenant.schema_version}")
-        elif args.tenant_command == "list":
+        elif args.command == "tenant" and args.tenant_command == "list":
             for tenant in list_tenants(fleet):
                 print(f"{tenant.slug:<24} {tenant.status:<12} {tenant.schema_version or '-'}")
-        elif args.tenant_command == "drop":
+        elif args.command == "tenant" and args.tenant_command == "drop":
             if not args.yes:
                 raise TenantError("Pass --yes to delete the tenant database")
             drop_tenant(fleet, args.slug)
             print(f"{args.slug}: removed")
-    except TenantError as exc:
+        elif args.user_command == "create":
+            _create_user(fleet, settings, args)
+    except (TenantError, AccessError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     return 0

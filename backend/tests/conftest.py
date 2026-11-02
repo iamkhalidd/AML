@@ -54,7 +54,7 @@ def fleet(test_database_url: SecretStr, tmp_path: Path) -> Iterator[Fleet]:
     fleet = Fleet(
         control_url=test_database_url.get_secret_value(),
         admin_url=_required_env("AML_ADMIN_DATABASE_URL"),
-        secrets=SecretStore(tmp_path / "secrets"),
+        secrets=SecretStore(tmp_path / "secrets" / "tenants"),
         actor="pytest",
         environment="test",
     )

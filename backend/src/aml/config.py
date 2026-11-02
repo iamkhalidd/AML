@@ -20,6 +20,16 @@ class Settings(BaseSettings):
     admin_database_url: SecretStr | None = None
     # Tenant database credentials, one file each (aml.control.secrets).
     secrets_dir: Path = Path(".secrets")
+    # Fernet key that encrypts users' TOTP secrets (ADR-005). Changing it invalidates every
+    # enrolled second factor, so it is generated once and never rotated without re-enrolment.
+    mfa_key: SecretStr | None = None
+    # Staff sign-in (ACC-2, ACC-5).
+    session_idle_minutes: int = 30
+    session_absolute_hours: int = 12
+    max_failed_logins: int = 5
+    lockout_minutes: int = 15
+    # Off only for plain-HTTP local development; every deployed environment uses TLS.
+    cookie_secure: bool = True
     # Compiled frontend files, served by the app in containers. Unset in local development.
     static_dir: Path | None = None
 

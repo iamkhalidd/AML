@@ -7,6 +7,8 @@ from pydantic import BaseModel
 from aml import __version__
 from aml.config import Settings, get_settings
 from aml.db import database_reachable
+from aml.modules.access import api as access_api
+from aml.problems import install as install_problems
 
 
 class Health(BaseModel):
@@ -23,6 +25,9 @@ class Readiness(BaseModel):
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(title="AML Platform", version=__version__, openapi_url="/v1/openapi.json")
+    install_problems(app)
+    app.state.access = access_api.build_context(settings)
+    app.include_router(access_api.router)
 
     @app.get("/v1/health", tags=["system"])
     def health() -> Health:

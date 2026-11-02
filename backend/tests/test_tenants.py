@@ -111,7 +111,7 @@ def test_control_events_are_append_only(fleet: Fleet) -> None:
             "DELETE FROM control_event",
             "TRUNCATE control_event",
         ):
-            with control.transaction(), pytest.raises(psycopg.errors.RaiseException):
+            with pytest.raises(psycopg.errors.RaiseException), control.transaction():
                 control.execute(statement)
 
 

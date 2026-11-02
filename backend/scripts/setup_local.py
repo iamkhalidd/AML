@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 import psycopg
+from cryptography.fernet import Fernet
 from psycopg import sql
 
 APP_ROLE = "aml_app"
@@ -87,6 +88,13 @@ def lock_down_public_schema(args: argparse.Namespace, name: str) -> None:
         conn.execute(sql.SQL("ALTER SCHEMA public OWNER TO {}").format(sql.Identifier(APP_ROLE)))
 
 
+def _env_has(key: str) -> bool:
+    if not ENV_FILE.exists():
+        return False
+    lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
+    return any(line.split("=", 1)[0].strip() == key for line in lines)
+
+
 def write_env(values: dict[str, str]) -> None:
     lines = ENV_FILE.read_text(encoding="utf-8").splitlines() if ENV_FILE.exists() else []
     kept = [line for line in lines if line.split("=", 1)[0].strip() not in values]
@@ -119,6 +127,10 @@ def main() -> int:
     env["AML_ADMIN_DATABASE_URL"] = (
         f"postgresql://{PROVISIONER_ROLE}:{passwords[PROVISIONER_ROLE]}@{server}/postgres"
     )
+    if not _env_has("AML_MFA_KEY"):
+        # Generated once: replacing it would make every enrolled second factor unreadable.
+        env["AML_MFA_KEY"] = Fernet.generate_key().decode()
+        env["AML_COOKIE_SECURE"] = "false"  # local development runs on plain HTTP
     write_env(env)
     print("Next: uv run aml migrate, then uv run uvicorn aml.main:app --reload")
     return 0

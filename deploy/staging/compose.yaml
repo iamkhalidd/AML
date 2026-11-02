@@ -26,6 +26,7 @@ services:
     environment:
       AML_ENVIRONMENT: staging
       AML_DATABASE_URL: postgresql://aml_app:${AML_APP_DB_PASSWORD}@db:5432/aml_control
+      AML_MFA_KEY: ${AML_MFA_KEY:?set AML_MFA_KEY in .env}
     volumes:
       - tenant-secrets:/var/lib/aml/secrets:ro
     networks: [edge, private]
@@ -44,6 +45,7 @@ services:
       AML_ENVIRONMENT: staging
       AML_OPERATOR: ${AML_OPERATOR:-staging-operator}
       AML_DATABASE_URL: postgresql://aml_app:${AML_APP_DB_PASSWORD}@db:5432/aml_control
+      AML_MFA_KEY: ${AML_MFA_KEY:?set AML_MFA_KEY in .env}
       AML_ADMIN_DATABASE_URL: postgresql://aml_provisioner:${AML_PROVISIONER_DB_PASSWORD}@db:5432/postgres
     volumes:
       - tenant-secrets:/var/lib/aml/secrets

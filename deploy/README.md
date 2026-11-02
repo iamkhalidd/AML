@@ -18,7 +18,7 @@ uv run python scripts/setup_local.py
 uv run uvicorn aml.main:app --reload
 ```
 
-The script creates two roles, neither a superuser: `aml_app`, which owns the `aml_control` and `aml_control_test` databases, and `aml_provisioner` (CREATEDB, CREATEROLE), which the `aml` command uses to create tenant databases. It then writes `backend/.env`. Running it again resets both passwords and rewrites the database lines. Run `uv run aml migrate` afterwards. Check it worked at <http://127.0.0.1:8000/v1/health/ready>.
+The script creates two roles, neither a superuser: `aml_app`, which owns the `aml_control` and `aml_control_test` databases, and `aml_provisioner` (CREATEDB, CREATEROLE), which the `aml` command uses to create tenant databases. It then writes `backend/.env`. Running it again resets both passwords and rewrites the database lines. On first run it also generates `AML_MFA_KEY` and keeps it on later runs. Run `uv run aml migrate` afterwards. Check it worked at <http://127.0.0.1:8000/v1/health/ready>.
 
 ## Staging
 
@@ -44,6 +44,9 @@ On first start, `initdb/01-roles.sh` creates the non-superuser `aml_app` and `am
 ```bash
 docker compose run --rm ops tenant create demo_mfb --name "Demo Microfinance Bank"
 docker compose run --rm ops status
+docker compose run --rm ops user create demo_mfb --email admin@demo.example --name "Demo Admin"
 ```
+
+Each institution is served at its own subdomain (`demo-mfb.<AML_DOMAIN>`). The Caddyfile does not route those yet; that needs a wildcard DNS record and either a DNS-challenge wildcard certificate or Caddy on-demand TLS.
 
 Not yet covered, and owned by later stories: per-tenant encryption keys (ADR-001), a secrets manager in place of the secrets volume, WAL archiving and the quarterly restore test, monitoring, the bastion host, and the container image scan in CI.

@@ -1,4 +1,4 @@
-"""Operator command line: aml migrate | status | tenant create/list/drop | user create.
+"""Operator command line: aml migrate | status | tenant ... | user create | audit verify.
 
 Run from backend/ so .env is found. Every change is logged in the control plane with the
 operator's name, taken from AML_OPERATOR or the login name.
@@ -13,6 +13,7 @@ from collections.abc import Sequence
 import psycopg
 
 from aml.config import Settings
+from aml.control.audit_check import AuditCheck, check_fleet
 from aml.control.secrets import SecretStore
 from aml.control.tenants import (
     DatabaseStatus,
@@ -66,6 +67,13 @@ def _parser() -> argparse.ArgumentParser:
     create_user_cmd.add_argument("--email", required=True)
     create_user_cmd.add_argument("--name", required=True, help="full name")
     create_user_cmd.add_argument("--role", choices=ROLES, default="administrator")
+    audit = commands.add_parser("audit", help="check tenants' audit trails")
+    audit_commands = audit.add_subparsers(dest="audit_command", required=True)
+    verify = audit_commands.add_parser(
+        "verify",
+        help="daily job: verify each audit hash chain, record its digest, add partitions",
+    )
+    verify.add_argument("slugs", nargs="*", help="tenants to check (default: every active one)")
     return parser
 
 
@@ -84,6 +92,7 @@ def _create_user(fleet: Fleet, settings: Settings, args: argparse.Namespace) -> 
             full_name=args.name,
             role=args.role,
             password=password,
+            operator=fleet.actor,
         )
     print(f"{user.email}: {user.role} created")
     print("Add this to the user's authenticator app now; it is not shown again:")
@@ -94,6 +103,17 @@ def _print_status(rows: list[DatabaseStatus]) -> None:
     for row in rows:
         marker = "" if row.current == row.head else "  <- behind"
         print(f"{row.database:<32} {row.current or 'base':<8} head {row.head}{marker}")
+
+
+def _print_checks(checks: list[AuditCheck]) -> bool:
+    """Print one line per tenant; return True if every chain is intact."""
+    for check in checks:
+        report = check.report
+        if report.ok:
+            print(f"{check.slug:<24} intact  {report.entries} entries, last {report.last_seq}")
+        else:
+            print(f"{check.slug:<24} BROKEN  {report.problem}")
+    return all(check.report.ok for check in checks)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -116,8 +136,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise TenantError("Pass --yes to delete the tenant database")
             drop_tenant(fleet, args.slug)
             print(f"{args.slug}: removed")
-        elif args.user_command == "create":
+        elif args.command == "user" and args.user_command == "create":
             _create_user(fleet, settings, args)
+        elif args.command == "audit" and args.audit_command == "verify":
+            intact = _print_checks(check_fleet(fleet, args.slugs))
+            return 0 if intact else 1
     except (TenantError, AccessError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

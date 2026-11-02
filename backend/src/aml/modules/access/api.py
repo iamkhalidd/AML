@@ -92,6 +92,15 @@ def now() -> datetime:
     return datetime.now(UTC)
 
 
+def client_ip(request: Request) -> str | None:
+    """The caller's address for the audit trail. Behind a proxy, run uvicorn with
+    --proxy-headers and --forwarded-allow-ips so this is the client, not the proxy."""
+    return request.client.host if request.client else None
+
+
+ClientIp = Annotated[str | None, Depends(client_ip)]
+
+
 def current_user(request: Request, ctx: Context, conn: TenantDb) -> User:
     token = request.cookies.get(SESSION_COOKIE)
     user = service.authenticate(conn, ctx.policy, token, now()) if token else None
@@ -146,7 +155,9 @@ def _user_out(user: User) -> UserOut:
 
 
 @router.post("/sign-in", responses=problems)
-def sign_in(body: SignInRequest, response: Response, ctx: Context, conn: TenantDb) -> UserOut:
+def sign_in(
+    body: SignInRequest, response: Response, ctx: Context, conn: TenantDb, ip: ClientIp
+) -> UserOut:
     try:
         user, token = service.sign_in(
             conn,
@@ -156,6 +167,7 @@ def sign_in(body: SignInRequest, response: Response, ctx: Context, conn: TenantD
             password=body.password,
             code=body.code,
             now=now(),
+            ip=ip,
         )
     except SignInError:
         raise ProblemError(
@@ -187,8 +199,8 @@ def sign_in(body: SignInRequest, response: Response, ctx: Context, conn: TenantD
     dependencies=[Depends(require_csrf)],
     responses={**problems, status.HTTP_403_FORBIDDEN: {"model": ProblemBody}},
 )
-def sign_out(request: Request, response: Response, conn: TenantDb) -> None:
-    service.sign_out(conn, request.cookies[SESSION_COOKIE], now())
+def sign_out(request: Request, response: Response, conn: TenantDb, ip: ClientIp) -> None:
+    service.sign_out(conn, request.cookies[SESSION_COOKIE], now(), ip)
     response.delete_cookie(SESSION_COOKIE, path="/")
     response.delete_cookie(CSRF_COOKIE, path="/")
 

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from aml.modules.access import approvals
-from aml.modules.access.api import CurrentUser, TenantDb, now, require, require_csrf
+from aml.modules.access.api import ClientIp, CurrentUser, TenantDb, now, require, require_csrf
 from aml.modules.access.approvals import Approval, ApprovalError
 from aml.modules.access.permissions import Permission
 from aml.modules.access.service import User
@@ -91,11 +91,11 @@ def get_fallback_approver(conn: TenantDb, user: SettingsManager) -> FallbackAppr
 
 @router.put("/fallback-approver", dependencies=_writes, responses=_problems)
 def set_fallback_approver(
-    body: FallbackApproverChange, conn: TenantDb, user: SettingsManager
+    body: FallbackApproverChange, conn: TenantDb, user: SettingsManager, ip: ClientIp
 ) -> FallbackApprover:
     try:
         approvals.set_fallback_approver(
-            conn, user, body.user_id, rationale=body.rationale, now=now()
+            conn, user, body.user_id, rationale=body.rationale, now=now(), ip=ip
         )
     except ApprovalError as exc:
         raise _problem(exc) from None
@@ -111,24 +111,28 @@ def get_approval(approval_id: UUID, conn: TenantDb, user: Viewer) -> ApprovalOut
 
 
 @router.post("/{approval_id}/approve", dependencies=_writes, responses=_problems)
-def approve(approval_id: UUID, body: Decision, conn: TenantDb, user: CurrentUser) -> ApprovalOut:
+def approve(
+    approval_id: UUID, body: Decision, conn: TenantDb, user: CurrentUser, ip: ClientIp
+) -> ApprovalOut:
     try:
-        return _out(approvals.approve(conn, user, approval_id, note=body.note, now=now()))
+        return _out(approvals.approve(conn, user, approval_id, note=body.note, now=now(), ip=ip))
     except ApprovalError as exc:
         raise _problem(exc) from None
 
 
 @router.post("/{approval_id}/reject", dependencies=_writes, responses=_problems)
-def reject(approval_id: UUID, body: Rejection, conn: TenantDb, user: CurrentUser) -> ApprovalOut:
+def reject(
+    approval_id: UUID, body: Rejection, conn: TenantDb, user: CurrentUser, ip: ClientIp
+) -> ApprovalOut:
     try:
-        return _out(approvals.reject(conn, user, approval_id, note=body.note, now=now()))
+        return _out(approvals.reject(conn, user, approval_id, note=body.note, now=now(), ip=ip))
     except ApprovalError as exc:
         raise _problem(exc) from None
 
 
 @router.post("/{approval_id}/withdraw", dependencies=_writes, responses=_problems)
-def withdraw(approval_id: UUID, conn: TenantDb, user: CurrentUser) -> ApprovalOut:
+def withdraw(approval_id: UUID, conn: TenantDb, user: CurrentUser, ip: ClientIp) -> ApprovalOut:
     try:
-        return _out(approvals.withdraw(conn, user, approval_id, now=now()))
+        return _out(approvals.withdraw(conn, user, approval_id, now=now(), ip=ip))
     except ApprovalError as exc:
         raise _problem(exc) from None

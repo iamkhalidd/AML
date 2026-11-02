@@ -92,6 +92,39 @@ approver (an active compliance officer or analyst) who may approve any kind.
 | `POST /v1/approvals/{id}/withdraw` | maker only |
 | `GET`/`PUT /v1/approvals/fallback-approver` | `{user_id, rationale}`; administrators |
 
+## Audit trail (AUD-1, AUD-2, NFR-10, ADR-006)
+
+Every change writes one entry to `audit.entry` in the tenant database, in the same
+transaction as the change: who, when, what (`action` such as `approval.approve`), which
+object, the values before and after, and the client IP. Call `audit.record(conn, ...)` from
+`aml.modules.audit.store` as the last statement of the transaction. Never put passwords,
+codes or session tokens in `before` or `after`.
+
+The database, not the code, keeps the trail honest:
+
+- The `audit` schema belongs to a separate role, `aml_t_<slug>_audit`, which nobody logs in
+  as. The application's role may only insert the descriptive columns and read; it cannot
+  update, delete, truncate, set the time or sequence, or disable triggers.
+- A trigger sets each entry's time, sequence number and SHA-256 hash, which covers the entry
+  and the previous entry's hash, so the entries form one chain. Further triggers refuse
+  UPDATE, DELETE and TRUNCATE even from the owner.
+- `aml audit verify` recomputes the chain for each tenant, keeps monthly partitions three
+  months ahead and stores a digest (last sequence number and hash) in the control plane,
+  where the tenant cannot reach. Each run checks the chain against earlier digests, so even
+  a privileged insider who rewrites the chain and every later hash is caught.
+
+```bash
+uv run aml audit verify             # every active tenant; exit code 1 if any chain is broken
+uv run aml audit verify lapo_mfb    # one tenant
+```
+
+Run it daily (see `deploy/README.md`). A broken chain needs an incident: compare against
+backups and the control-plane digests to find what changed. Searching and viewing the trail
+come in story 7.1.
+
+Behind a proxy, run uvicorn with `--proxy-headers` (the Docker image does) so the recorded IP
+is the client's, not the proxy's.
+
 Checks, as CI runs them:
 
 ```bash

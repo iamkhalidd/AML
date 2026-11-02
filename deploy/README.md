@@ -47,6 +47,12 @@ docker compose run --rm ops status
 docker compose run --rm ops user create demo_mfb --email admin@demo.example --name "Demo Admin"
 ```
 
+The audit chain check must run once a day (NFR-10). Add it to the deploy user's crontab on the host (`crontab -e`); a failed run exits non-zero, so wire cron mail or monitoring to it:
+
+```bash
+15 2 * * * cd /opt/aml && docker compose run --rm ops audit verify >> /var/log/aml-audit-verify.log 2>&1
+```
+
 Each institution is served at its own subdomain (`demo-mfb.<AML_DOMAIN>`). The Caddyfile does not route those yet; that needs a wildcard DNS record and either a DNS-challenge wildcard certificate or Caddy on-demand TLS.
 
 Not yet covered, and owned by later stories: per-tenant encryption keys (ADR-001), a secrets manager in place of the secrets volume, WAL archiving and the quarterly restore test, monitoring, the bastion host, and the container image scan in CI.

@@ -6,7 +6,8 @@ approver in settings, who may approve any kind, but never their own change.
 
 Modules that own a kind register what approval does with ``on_approved``; that handler
 runs in the same transaction as the decision, so the change and its approval commit
-together or not at all.
+together or not at all. Every submission, decision and settings change is audited in
+that transaction too (AUD-1).
 """
 
 from collections.abc import Callable
@@ -21,6 +22,7 @@ from psycopg.types.json import Jsonb
 
 from aml.modules.access.permissions import Permission, allowed
 from aml.modules.access.service import User
+from aml.modules.audit import store as audit
 
 # kind -> (permission to submit, permission to approve)
 KINDS: dict[str, tuple[Permission, Permission]] = {
@@ -81,6 +83,7 @@ def submit(
     payload: dict[str, Any],
     rationale: str,
     now: datetime,
+    ip: str | None = None,
 ) -> Approval:
     if kind not in KINDS:
         raise ApprovalError("APPROVAL_KIND_UNKNOWN", f"Unknown approval kind {kind!r}")
@@ -95,6 +98,20 @@ def submit(
                 " created_at) VALUES (%s, %s, %s, %s, %s, %s) RETURNING *",
                 (kind, subject_id, Jsonb(payload), rationale.strip(), maker.id, now),
             ).fetchone()
+            audit.record(
+                conn,
+                "approval.submit",
+                object_type="approval_request",
+                object_id=row["id"],  # type: ignore[index]
+                user_id=maker.id,
+                after={
+                    "kind": kind,
+                    "subject_id": subject_id,
+                    "payload": payload,
+                    "rationale": rationale.strip(),
+                },
+                ip=ip,
+            )
     except UniqueViolation:
         raise ApprovalError(
             "APPROVAL_ALREADY_PENDING", "This item already has a change waiting for approval"
@@ -103,7 +120,13 @@ def submit(
 
 
 def approve(
-    conn: psycopg.Connection, checker: User, approval_id: Any, *, note: str | None, now: datetime
+    conn: psycopg.Connection,
+    checker: User,
+    approval_id: Any,
+    *,
+    note: str | None,
+    now: datetime,
+    ip: str | None = None,
 ) -> Approval:
     with conn.transaction():
         pending = _pending_for_checker(conn, checker, approval_id, now)
@@ -111,25 +134,43 @@ def approve(
         handler = _handlers.get(approval.kind)
         if handler is not None:
             handler(conn, approval)
+        _audit_decision(conn, "approval.approve", approval, checker, ip)
     return approval
 
 
 def reject(
-    conn: psycopg.Connection, checker: User, approval_id: Any, *, note: str, now: datetime
+    conn: psycopg.Connection,
+    checker: User,
+    approval_id: Any,
+    *,
+    note: str,
+    now: datetime,
+    ip: str | None = None,
 ) -> Approval:
     if not note.strip():
         raise ApprovalError("NOTE_REQUIRED", "Say why the change is rejected")
     with conn.transaction():
         pending = _pending_for_checker(conn, checker, approval_id, now)
-        return _decide(conn, pending.id, "rejected", checker, note, now)
+        approval = _decide(conn, pending.id, "rejected", checker, note, now)
+        _audit_decision(conn, "approval.reject", approval, checker, ip)
+    return approval
 
 
-def withdraw(conn: psycopg.Connection, maker: User, approval_id: Any, *, now: datetime) -> Approval:
+def withdraw(
+    conn: psycopg.Connection,
+    maker: User,
+    approval_id: Any,
+    *,
+    now: datetime,
+    ip: str | None = None,
+) -> Approval:
     with conn.transaction():
         pending = _locked_pending(conn, approval_id)
         if pending.maker_id != maker.id:
             raise ApprovalError("PERMISSION_DENIED", "Only the maker can withdraw a change")
-        return _decide(conn, pending.id, "withdrawn", None, None, now)
+        approval = _decide(conn, pending.id, "withdrawn", None, None, now)
+        _audit_decision(conn, "approval.withdraw", approval, maker, ip)
+    return approval
 
 
 def get(conn: psycopg.Connection, approval_id: Any) -> Approval | None:
@@ -169,7 +210,13 @@ def fallback_approver(conn: psycopg.Connection, now: datetime) -> Any:
 
 
 def set_fallback_approver(
-    conn: psycopg.Connection, admin: User, user_id: Any, *, rationale: str, now: datetime
+    conn: psycopg.Connection,
+    admin: User,
+    user_id: Any,
+    *,
+    rationale: str,
+    now: datetime,
+    ip: str | None = None,
 ) -> int:
     """Name (or, with ``user_id=None``, clear) the fallback approver; return the version."""
     if not allowed(admin.role, Permission.SETTINGS_MANAGE):
@@ -187,20 +234,36 @@ def set_fallback_approver(
                     "The fallback approver must be an active compliance officer or analyst",
                 )
         conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (FALLBACK_APPROVER_KEY,))
+        previous = conn.execute(
+            "SELECT version, value FROM setting_version WHERE key = %s"
+            " ORDER BY version DESC LIMIT 1",
+            (FALLBACK_APPROVER_KEY,),
+        ).fetchone()
+        value = {"user_id": None if user_id is None else str(user_id)}
         version = conn.execute(
             "INSERT INTO setting_version (key, version, value, effective_from, rationale,"
             " created_by) SELECT %s, coalesce(max(version), 0) + 1, %s, %s, %s, %s"
             " FROM setting_version WHERE key = %s RETURNING version",
             (
                 FALLBACK_APPROVER_KEY,
-                Jsonb({"user_id": None if user_id is None else str(user_id)}),
+                Jsonb(value),
                 now,
                 rationale.strip(),
                 admin.id,
                 FALLBACK_APPROVER_KEY,
             ),
-        ).fetchone()
-    return int(version[0])  # type: ignore[index]
+        ).fetchone()[0]  # type: ignore[index]
+        audit.record(
+            conn,
+            "setting.change",
+            object_type="setting",
+            object_id=FALLBACK_APPROVER_KEY,
+            user_id=admin.id,
+            before=None if previous is None else {"version": previous[0], "value": previous[1]},
+            after={"version": version, "value": value, "rationale": rationale.strip()},
+            ip=ip,
+        )
+    return int(version)
 
 
 def _locked_pending(conn: psycopg.Connection, approval_id: Any) -> Approval:
@@ -227,6 +290,21 @@ def _pending_for_checker(
     ):
         raise ApprovalError("PERMISSION_DENIED", "Your role cannot decide on this change")
     return approval
+
+
+def _audit_decision(
+    conn: psycopg.Connection, action: str, approval: Approval, actor: User, ip: str | None
+) -> None:
+    audit.record(
+        conn,
+        action,
+        object_type="approval_request",
+        object_id=approval.id,
+        user_id=actor.id,
+        before={"status": "pending"},
+        after={"status": approval.status, "decision_note": approval.decision_note},
+        ip=ip,
+    )
 
 
 def _decide(

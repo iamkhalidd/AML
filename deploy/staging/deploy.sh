@@ -25,8 +25,8 @@ if [[ -n "$IMAGE" ]]; then
 fi
 chmod 0600 "$WORK/.env"
 
-scp -q "$HERE/compose.yaml" "$HERE/Caddyfile" "$WORK/.env" "$TARGET:$APP_DIR/"
-ssh "$TARGET" "cd $APP_DIR && chmod 0600 .env && docker compose pull && docker compose up -d --wait"
+scp -q -r "$HERE/compose.yaml" "$HERE/Caddyfile" "$HERE/initdb" "$WORK/.env" "$TARGET:$APP_DIR/"
+ssh "$TARGET" "cd $APP_DIR && chmod 0600 .env && docker compose pull && docker compose up -d --wait && docker compose run --rm ops migrate"
 
 DOMAIN="$(grep '^AML_DOMAIN=' "$WORK/.env" | cut -d= -f2-)"
 echo "Smoke test against https://$DOMAIN"

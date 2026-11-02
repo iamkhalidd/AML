@@ -5,7 +5,7 @@ Every environment is created by script (NFR-13). Local, CI and staging hold synt
 | Environment | How it is created |
 | --- | --- |
 | Local | `backend/scripts/setup_local.py` against a local PostgreSQL 18 |
-| CI | `.github/workflows/ci.yml`, with a PostgreSQL 18 service container |
+| CI | `.github/workflows/ci.yml`, with a PostgreSQL 18 service container set up by the same `setup_local.py` |
 | Staging | `deploy/staging/provision.sh` once on the host, then `deploy/staging/deploy.sh` for each release |
 
 ## Local
@@ -18,7 +18,7 @@ uv run python scripts/setup_local.py
 uv run uvicorn aml.main:app --reload
 ```
 
-The script creates the `aml_app` role and the `aml_control` and `aml_control_test` databases, then writes `backend/.env`. Running it again resets the `aml_app` password and rewrites the two database lines. Check it worked at <http://127.0.0.1:8000/v1/health/ready>.
+The script creates two roles, neither a superuser: `aml_app`, which owns the `aml_control` and `aml_control_test` databases, and `aml_provisioner` (CREATEDB, CREATEROLE), which the `aml` command uses to create tenant databases. It then writes `backend/.env`. Running it again resets both passwords and rewrites the database lines. Run `uv run aml migrate` afterwards. Check it worked at <http://127.0.0.1:8000/v1/health/ready>.
 
 ## Staging
 
@@ -37,6 +37,13 @@ Hosting is not yet chosen (ADR-002). The scripts assume a plain Ubuntu 24.04 VM 
    rm /tmp/staging.env
    ```
    Commit `staging.env.age`. Keep the key file offline with a second copy held by a named trusted person.
-5. **Deploy.** `deploy/staging/deploy.sh deploy@<host> [image]` decrypts the settings, copies the stack, starts it and fails unless `/v1/health/ready` answers.
+5. **Deploy.** `deploy/staging/deploy.sh deploy@<host> [image]` decrypts the settings, copies the stack, starts it, runs `aml migrate` and fails unless `/v1/health/ready` answers.
 
-Not yet covered, and owned by later stories: database migrations (0.3), WAL archiving and the quarterly restore test, monitoring, the bastion host, and the container image scan in CI.
+On first start, `initdb/01-roles.sh` creates the non-superuser `aml_app` and `aml_provisioner` roles and the `aml_control` database. The postgres superuser never leaves the database container. Operator commands run in the on-demand `ops` service, which shares the tenant secrets volume with the app (read-only for the app):
+
+```bash
+docker compose run --rm ops tenant create demo_mfb --name "Demo Microfinance Bank"
+docker compose run --rm ops status
+```
+
+Not yet covered, and owned by later stories: per-tenant encryption keys (ADR-001), a secrets manager in place of the secrets volume, WAL archiving and the quarterly restore test, monitoring, the bastion host, and the container image scan in CI.

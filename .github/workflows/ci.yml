@@ -23,15 +23,11 @@ jobs:
       postgres:
         image: postgres:18
         env:
-          POSTGRES_USER: aml_app
           POSTGRES_PASSWORD: ci-only-password
-          POSTGRES_DB: aml_control_test
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U aml_app" --health-interval 5s
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
           --health-timeout 5s --health-retries 10
-    env:
-      AML_TEST_DATABASE_URL: postgresql://aml_app:ci-only-password@localhost:5432/aml_control_test
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
@@ -40,6 +36,11 @@ jobs:
           enable-cache: true
       - name: Install
         run: uv sync --locked
+      # Same non-superuser roles as local development, so isolation tests mean something.
+      - name: Create test databases
+        run: uv run python scripts/setup_local.py
+        env:
+          PGPASSWORD: ci-only-password
       - name: Lint
         run: uv run ruff check .
       - name: Format

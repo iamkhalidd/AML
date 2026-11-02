@@ -18,13 +18,13 @@ COPY backend/src ./src
 RUN uv sync --locked --no-dev --no-editable
 
 FROM python:3.14-slim-trixie
-RUN groupadd --system aml && useradd --system --gid aml --no-create-home aml
+RUN groupadd --system aml && useradd --system --gid aml --no-create-home aml     && install -d -o aml -g aml -m 0700 /var/lib/aml/secrets
 WORKDIR /app
 COPY --from=backend /app/.venv /app/.venv
 COPY --from=frontend /build/dist /app/static
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    AML_STATIC_DIR=/app/static
+    AML_STATIC_DIR=/app/static     AML_SECRETS_DIR=/var/lib/aml/secrets
 USER aml
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

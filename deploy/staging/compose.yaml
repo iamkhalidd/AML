@@ -25,8 +25,29 @@ services:
     restart: unless-stopped
     environment:
       AML_ENVIRONMENT: staging
-      AML_DATABASE_URL: postgresql://aml_app:${POSTGRES_PASSWORD}@db:5432/aml_control
+      AML_DATABASE_URL: postgresql://aml_app:${AML_APP_DB_PASSWORD}@db:5432/aml_control
+    volumes:
+      - tenant-secrets:/var/lib/aml/secrets:ro
     networks: [edge, private]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Operator commands, run on demand only:
+  #   docker compose run --rm ops migrate
+  #   docker compose run --rm ops tenant create <slug> --name "<legal name>"
+  ops:
+    image: ${AML_IMAGE:?set AML_IMAGE in .env}
+    profiles: [ops]
+    entrypoint: ["aml"]
+    environment:
+      AML_ENVIRONMENT: staging
+      AML_OPERATOR: ${AML_OPERATOR:-staging-operator}
+      AML_DATABASE_URL: postgresql://aml_app:${AML_APP_DB_PASSWORD}@db:5432/aml_control
+      AML_ADMIN_DATABASE_URL: postgresql://aml_provisioner:${AML_PROVISIONER_DB_PASSWORD}@db:5432/postgres
+    volumes:
+      - tenant-secrets:/var/lib/aml/secrets
+    networks: [private]
     depends_on:
       db:
         condition: service_healthy
@@ -35,15 +56,18 @@ services:
     image: postgres:18
     restart: unless-stopped
     environment:
-      POSTGRES_USER: aml_app
-      POSTGRES_DB: aml_control
+      # The superuser stays inside the container; the app and the CLI use the
+      # non-superuser roles created by initdb/01-roles.sh on first start.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_INITDB_ARGS: --encoding=UTF8 --data-checksums
+      AML_APP_DB_PASSWORD: ${AML_APP_DB_PASSWORD:?set AML_APP_DB_PASSWORD in .env}
+      AML_PROVISIONER_DB_PASSWORD: ${AML_PROVISIONER_DB_PASSWORD:?set AML_PROVISIONER_DB_PASSWORD in .env}
     volumes:
       - db-data:/var/lib/postgresql
+      - ./initdb:/docker-entrypoint-initdb.d:ro
     networks: [private]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aml_app -d aml_control"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aml_control"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -54,6 +78,7 @@ networks:
     internal: true
 
 volumes:
+  tenant-secrets:
   caddy-data:
   caddy-config:
   db-data:

@@ -24,6 +24,7 @@ frontend/coverage/
 !.env.example
 *.pem
 *.key
+.secrets/
 
 # Editors and OS
 .vscode/

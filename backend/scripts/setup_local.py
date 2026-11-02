@@ -2,8 +2,10 @@
 
 Run from backend/:  uv run python scripts/setup_local.py
 
-Safe to run again: it creates what is missing, gives the application role a fresh
-password and rewrites only the AML_* database lines in .env. It needs a PostgreSQL
+Safe to run again: it creates what is missing, gives both roles fresh passwords and
+rewrites only the AML_* database lines in .env. Two roles, neither a superuser:
+aml_app owns the control-plane databases; aml_provisioner (CREATEDB, CREATEROLE) is
+used only by the aml CLI to create tenant databases. It needs a PostgreSQL
 superuser once; the password is read from PGPASSWORD or asked for, never stored.
 Local data is synthetic only.
 """
@@ -19,6 +21,11 @@ import psycopg
 from psycopg import sql
 
 APP_ROLE = "aml_app"
+PROVISIONER_ROLE = "aml_provisioner"
+ROLE_ATTRIBUTES = {
+    APP_ROLE: "LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB",
+    PROVISIONER_ROLE: "LOGIN NOSUPERUSER CREATEROLE CREATEDB",
+}
 DATABASES = {"AML_DATABASE_URL": "aml_control", "AML_TEST_DATABASE_URL": "aml_control_test"}
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
@@ -46,15 +53,18 @@ def admin_connection(args: argparse.Namespace, dbname: str) -> psycopg.Connectio
     )
 
 
-def ensure_role(conn: psycopg.Connection, password: str) -> None:
-    exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (APP_ROLE,)).fetchone()
+def ensure_role(conn: psycopg.Connection, role: str, password: str) -> None:
+    exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
     verb = sql.SQL("ALTER") if exists else sql.SQL("CREATE")
     conn.execute(
-        sql.SQL("{} ROLE {} LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB PASSWORD {}").format(
-            verb, sql.Identifier(APP_ROLE), sql.Literal(password)
+        sql.SQL("{} ROLE {} {} PASSWORD {}").format(
+            verb,
+            sql.Identifier(role),
+            sql.SQL(ROLE_ATTRIBUTES[role]),
+            sql.Literal(password),
         )
     )
-    print(f"role {APP_ROLE}: {'password reset' if exists else 'created'}")
+    print(f"role {role}: {'password reset' if exists else 'created'}")
 
 
 def ensure_database(conn: psycopg.Connection, name: str) -> None:
@@ -89,10 +99,11 @@ def write_env(values: dict[str, str]) -> None:
 
 def main() -> int:
     args = parse_args()
-    password = secrets.token_urlsafe(24)
+    passwords = {role: secrets.token_urlsafe(24) for role in ROLE_ATTRIBUTES}
     try:
         with admin_connection(args, "postgres") as conn:
-            ensure_role(conn, password)
+            for role, password in passwords.items():
+                ensure_role(conn, role, password)
             for name in DATABASES.values():
                 ensure_database(conn, name)
         for name in DATABASES.values():
@@ -100,13 +111,16 @@ def main() -> int:
     except psycopg.OperationalError as exc:
         print(f"Could not connect to PostgreSQL: {exc}", file=sys.stderr)
         return 1
-    write_env(
-        {
-            key: f"postgresql://{APP_ROLE}:{password}@{args.host}:{args.port}/{name}"
-            for key, name in DATABASES.items()
-        }
+    server = f"{args.host}:{args.port}"
+    env = {
+        key: f"postgresql://{APP_ROLE}:{passwords[APP_ROLE]}@{server}/{name}"
+        for key, name in DATABASES.items()
+    }
+    env["AML_ADMIN_DATABASE_URL"] = (
+        f"postgresql://{PROVISIONER_ROLE}:{passwords[PROVISIONER_ROLE]}@{server}/postgres"
     )
-    print("Done. Start the API with: uv run uvicorn aml.main:app --reload")
+    write_env(env)
+    print("Next: uv run aml migrate, then uv run uvicorn aml.main:app --reload")
     return 0
 
 

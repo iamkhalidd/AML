@@ -125,6 +125,18 @@ come in story 7.1.
 Behind a proxy, run uvicorn with `--proxy-headers` (the Docker image does) so the recorded IP
 is the client's, not the proxy's.
 
+## Customers and transactions (CUS-1, CUS-6, ING-1)
+
+Tenant migration `t0004` holds the bank's data as the data model describes it: `customer`
+(with `customer_version` snapshots, `beneficial_owner` and `related_party`), `account`, `txn`,
+and the ingestion stores `ingestion_batch` and `dead_letter`. Every record is identified by
+`(source_system, external_id)`, unique per table. Business records are never deleted. Money is
+BIGINT minor units (kobo) and must be positive; direction says credit or debit. Timestamps
+are `timestamptz` in UTC. Enum values are the data contract's in lower case; the API maps the
+upper-case wire values. A completed batch's counts must add up (submitted = accepted +
+duplicates + rejected), and a dead letter has a resolution time exactly when it is no longer
+held.
+
 Checks, as CI runs them:
 
 ```bash

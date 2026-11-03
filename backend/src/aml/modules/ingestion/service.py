@@ -1,14 +1,16 @@
-"""Store customers and accounts sent through the integration API (CUS-1, CUS-6, KYC-1, ING-3).
+"""Store records sent through the integration API (CUS-1, CUS-6, KYC-1, ING-1, ING-3, ING-4).
 
 A call is one batch. Every record is counted once: accepted (new or changed), duplicate
 (same ID, same content, nothing changes) or rejected (kept in the dead-letter store with
 the contract's error code). The counts always add up. A customer change raises its
 version and keeps a snapshot of what was received, so earlier states can be shown later.
+A transaction never changes once accepted, except that a PENDING one may settle once.
 """
 
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -17,7 +19,16 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from aml.modules.audit import store
-from aml.modules.ingestion.contract import Account, Customer, RecordRejectedError, check
+from aml.modules.ingestion.contract import (
+    Account,
+    Customer,
+    RecordRejectedError,
+    Transaction,
+    check,
+)
+
+# The contract allows a little clock drift between the bank's systems and ours.
+FUTURE_TOLERANCE = timedelta(minutes=5)
 
 
 @dataclass
@@ -36,6 +47,15 @@ class Caller:
 
     label: str
     ip: str | None = None
+
+
+@dataclass(frozen=True)
+class Batch:
+    """What a record handler needs to know about the batch it belongs to."""
+
+    id: UUID
+    source_system: str
+    received_at: datetime
 
 
 def _lower(value: Any) -> Any:
@@ -58,7 +78,15 @@ def ingest_accounts(
     return _ingest(conn, caller, source_system, "account", records, "account_id", _account)
 
 
-Handler = Callable[[psycopg.Connection, str, Any], bool]
+def ingest_transactions(
+    conn: psycopg.Connection, caller: Caller, source_system: str, records: Sequence[Any]
+) -> BatchResult:
+    return _ingest(
+        conn, caller, source_system, "transaction", records, "transaction_id", _transaction
+    )
+
+
+Handler = Callable[[psycopg.Connection, Batch, Any], bool]
 
 
 def _ingest(
@@ -73,14 +101,16 @@ def _ingest(
     with conn.transaction():
         row = conn.execute(
             "INSERT INTO ingestion_batch (source_system, entity, submitted, status)"
-            " VALUES (%s, %s, %s, 'processing') RETURNING id",
+            " VALUES (%s, %s, %s, 'processing') RETURNING id, received_at",
             (source_system, entity, len(records)),
         ).fetchone()
-        result = BatchResult(batch_id=row[0], submitted=len(records))  # type: ignore[index]
+        assert row is not None  # noqa: S101 - INSERT ... RETURNING always returns a row
+        batch = Batch(row[0], source_system, row[1])
+        result = BatchResult(batch_id=batch.id, submitted=len(records))
         for index, raw in enumerate(records):
             try:
                 with conn.transaction():  # a savepoint: one record's failure stays its own
-                    changed = handle(conn, source_system, raw)
+                    changed = handle(conn, batch, raw)
             except RecordRejectedError as rejection:
                 result.rejected += 1
                 result.errors.append(
@@ -151,7 +181,8 @@ def _customer_values(record: Customer) -> tuple[Any, ...]:
     )  # fmt: skip
 
 
-def _customer(conn: psycopg.Connection, source_system: str, raw: Any) -> bool:
+def _customer(conn: psycopg.Connection, batch: Batch, raw: Any) -> bool:
+    source_system = batch.source_system
     record = check(Customer, raw)
     snapshot = record.model_dump(mode="json")
     found = conn.execute(
@@ -208,7 +239,8 @@ def _customer(conn: psycopg.Connection, source_system: str, raw: Any) -> bool:
     return True
 
 
-def _account(conn: psycopg.Connection, source_system: str, raw: Any) -> bool:
+def _account(conn: psycopg.Connection, batch: Batch, raw: Any) -> bool:
+    source_system = batch.source_system
     record = check(Account, raw)
     owner = conn.execute(
         "SELECT id FROM customer WHERE source_system = %s AND external_id = %s",
@@ -248,6 +280,101 @@ def _account(conn: psycopg.Connection, source_system: str, raw: Any) -> bool:
         " branch_id = %s, updated_at = now() WHERE id = %s",
         (*values, found[0]),
     )
+    return True
+
+
+# Contract field -> txn column, for everything but status, which may settle once.
+_TXN_FIXED = {
+    "account_id": "account_id", "customer_id": "customer_id", "timestamp": "occurred_at",
+    "value_date": "value_date", "amount_minor": "amount", "currency": "currency",
+    "direction": "direction", "channel": "channel", "transaction_type": "txn_type",
+    "counterparty_name": "counterparty_name", "counterparty_account": "counterparty_account",
+    "counterparty_bank_code": "counterparty_bank_code", "narration": "narration",
+    "reference": "reference", "reversal_of": "reversal_of", "location_id": "location_id",
+}  # fmt: skip
+_TXN_ENUMS = ("direction", "channel", "txn_type")
+
+
+def _lookup(conn: psycopg.Connection, table: str, source_system: str, external_id: str) -> Any:
+    query = sql.SQL("SELECT id FROM {} WHERE source_system = %s AND external_id = %s")
+    found = conn.execute(
+        query.format(sql.Identifier(table)), (source_system, external_id)
+    ).fetchone()
+    return None if found is None else found[0]
+
+
+def _transaction(conn: psycopg.Connection, batch: Batch, raw: Any) -> bool:
+    record = check(Transaction, raw)
+    if record.timestamp > batch.received_at + FUTURE_TOLERANCE:
+        raise RecordRejectedError(
+            "TIMESTAMP_INVALID", "timestamp is more than 5 minutes in the future"
+        )
+    references = {
+        "account_id": ("account", record.account_id),
+        "customer_id": ("customer", record.customer_id),
+        "reversal_of": ("txn", record.reversal_of),
+    }
+    ids: dict[str, Any] = {}
+    for name, (table, external_id) in references.items():
+        ids[name] = external_id and _lookup(conn, table, batch.source_system, external_id)
+        if external_id and ids[name] is None:
+            # Held until the reference arrives (ING-3); story 1.5 reprocesses it.
+            raise RecordRejectedError("REFERENCE_NOT_FOUND", f"{name} is not known yet")
+    values = {
+        "account_id": ids["account_id"], "customer_id": ids["customer_id"],
+        "timestamp": record.timestamp, "value_date": record.value_date,
+        "amount_minor": record.amount_minor, "currency": record.currency,
+        "direction": _lower(record.direction), "channel": _lower(record.channel),
+        "transaction_type": _lower(record.transaction_type),
+        "counterparty_name": record.counterparty_name,
+        "counterparty_account": record.counterparty_account,
+        "counterparty_bank_code": record.counterparty_bank_code,
+        "narration": record.narration, "reference": record.reference,
+        "reversal_of": ids["reversal_of"], "location_id": record.location_id,
+    }  # fmt: skip
+    status = _lower(record.status)
+    stored_columns = sql.SQL(", ").join(
+        sql.SQL("{}::text" if column in _TXN_ENUMS else "{}").format(sql.Identifier(column))
+        for column in _TXN_FIXED.values()
+    )
+    found = conn.execute(
+        sql.SQL(
+            "SELECT id, status::text, {} FROM txn"
+            " WHERE source_system = %s AND external_id = %s FOR UPDATE"
+        ).format(stored_columns),
+        (batch.source_system, record.transaction_id),
+    ).fetchone()
+    if found is None:
+        insert = sql.SQL(
+            "INSERT INTO txn (source_system, external_id, batch_id, status, {})"
+            " VALUES (%s, %s, %s, %s, {})"
+            " ON CONFLICT (source_system, external_id) DO NOTHING RETURNING id"
+        ).format(
+            sql.SQL(", ").join(sql.Identifier(c) for c in _TXN_FIXED.values()),
+            sql.SQL(", ").join(sql.Placeholder() for _ in values),
+        )
+        params = (batch.source_system, record.transaction_id, batch.id, status, *values.values())
+        if conn.execute(insert, params).fetchone() is None:
+            raise RecordRejectedError(
+                "DUPLICATE_CONFLICT", "transaction_id was created by a concurrent batch"
+            )
+        return True
+    txn_id, stored_status, *stored = found
+    changed = [
+        name for name, before in zip(_TXN_FIXED, stored, strict=True) if before != values[name]
+    ]
+    if changed:
+        raise RecordRejectedError(
+            "DUPLICATE_CONFLICT", f"an accepted transaction cannot change {', '.join(changed)}"
+        )
+    if stored_status == status:
+        return False
+    if stored_status != "pending":
+        raise RecordRejectedError(
+            "DUPLICATE_CONFLICT",
+            f"status cannot change from {stored_status.upper()}; only PENDING may settle",
+        )
+    conn.execute("UPDATE txn SET status = %s WHERE id = %s", (status, txn_id))
     return True
 
 

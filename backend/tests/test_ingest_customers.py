@@ -319,7 +319,7 @@ def test_business_customers_keep_their_beneficial_owners(
         ({"kyc_status": "verified"}, "ENUM_INVALID", "kyc_status"),
         ({"date_of_birth": None}, "SCHEMA_INVALID", "date_of_birth is required"),
         ({"kyc_verified_at": None}, "SCHEMA_INVALID", "kyc_verified_at is required"),
-        ({"kyc_verified_at": "2024-01-16T10:00:00"}, "SCHEMA_INVALID", "UTC offset"),
+        ({"kyc_verified_at": "2024-01-16T10:00:00"}, "TIMESTAMP_INVALID", "UTC offset"),
         ({"declared_income_max_minor": 5}, "SCHEMA_INVALID", "below"),
         ({"declared_income_min_minor": -1}, "AMOUNT_INVALID", "declared_income_min_minor"),
         ({"declared_income_min_minor": 10.5}, "AMOUNT_INVALID", "declared_income_min_minor"),

@@ -163,6 +163,19 @@ with a snapshot of what was received. Beneficial owners are updated but never de
 The whole request is refused with 400 for a wrong `schema_version` or malformed body, and with
 413 above the record limit.
 
+### Transactions (ING-1, ING-3, ING-4, ING-5)
+
+`POST /v1/transactions` takes the same envelope with up to 1000 records. Amounts are whole
+minor units above zero (`AMOUNT_INVALID` otherwise). A `timestamp` needs a UTC offset and may
+be at most 5 minutes ahead of when the batch arrived (`TIMESTAMP_INVALID`); `reversal_of`
+names the original `transaction_id` and only applies to type `REVERSAL`. A transaction whose
+account, customer or original is not known yet is held as `REFERENCE_NOT_FOUND`.
+
+Sending a transaction again is a duplicate and changes nothing, even with the timestamp
+written in another offset. Once accepted, a transaction never changes, except that a
+`PENDING` one may settle to `SUCCESS`, `FAILED` or `REVERSED`; any other difference is
+`DUPLICATE_CONFLICT`, naming the fields.
+
 Checks, as CI runs them:
 
 ```bash

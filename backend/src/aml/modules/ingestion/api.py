@@ -1,4 +1,4 @@
-"""Integration API for the institution's systems (API specification; ING-1, CUS-1, CUS-6).
+"""Integration API for the institution's systems (API specification; ING-1, ING-5, CUS-1, CUS-6).
 
 Callers authenticate with a bearer credential, not a staff session, so these endpoints
 need no CSRF token. A well-formed request answers 200 even when some records fail; the
@@ -26,6 +26,7 @@ _problems: dict[int | str, dict[str, object]] = {
 
 MAX_CUSTOMERS = 500
 MAX_ACCOUNTS = 500
+MAX_TRANSACTIONS = 1000
 
 
 def require_scope(scope: str) -> Callable[..., Credential]:
@@ -110,6 +111,18 @@ def submit_accounts(
     _checked(submission, MAX_ACCOUNTS)
     caller = service.Caller(credential.label, ip)
     return _out(service.ingest_accounts(conn, caller, submission.source_system, submission.records))
+
+
+@router.post("/transactions", responses=_problems)
+def submit_transactions(
+    submission: Submission, conn: TenantDb, credential: Ingest, ip: ClientIp
+) -> BatchOut:
+    """Submit transactions, up to 1000 per call. Resending one changes nothing (ING-4)."""
+    _checked(submission, MAX_TRANSACTIONS)
+    caller = service.Caller(credential.label, ip)
+    return _out(
+        service.ingest_transactions(conn, caller, submission.source_system, submission.records)
+    )
 
 
 @router.get("/batches/{batch_id}", responses=_problems)

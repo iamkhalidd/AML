@@ -206,6 +206,34 @@ explained by the parameters that raised them. `GET /v1/rules` and `GET /v1/rules
 show the version in effect now, any pending approval, and the full version history.
 Analysts propose, compliance officers propose and approve, auditors only view.
 
+## Rule engine and job lanes (RUL-6, ADR-004)
+
+Background work lives in each tenant's `job` table, split into lanes: `ingest`,
+`evaluate`, `scheduled_rule`, `report` and `notification`. Workers claim jobs with
+`FOR UPDATE SKIP LOCKED`, so any number can share a lane, and each lane has its own
+workers so a heavy report never delays evaluation. A failed job is retried with
+exponential backoff (30 s, 60 s, ...) and is left `failed` after its last attempt. A job
+whose worker died is claimed again once its lock is 15 minutes old.
+
+Every accepted transaction, and every pending one that later settles, queues one
+`evaluate_transaction` job. That job runs each enabled event rule whose scope covers the
+customer, always with the approved version in effect when the job runs. Scheduled rules
+run over a window: hourly rules over the previous UTC hour, and daily rules over the
+previous Lagos day, once the configured Lagos time has passed. Each window is queued
+once; missed windows are not backfilled.
+
+Run one worker per lane (or more for a busy lane) against every active tenant:
+
+```bash
+uv run aml worker --lane evaluate
+uv run aml worker --lane scheduled_rule
+```
+
+`--once` makes a single pass and exits. `GET /v1/engine/status` (anyone who can view rules:
+compliance officers, analysts and auditors) shows each lane's backlog and how long jobs finished in the last 24
+hours took from queueing to done (p50, p95 and max). This is the measured evaluation time
+the institution sees.
+
 Checks, as CI runs them:
 
 ```bash

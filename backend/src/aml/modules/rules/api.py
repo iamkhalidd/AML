@@ -4,13 +4,14 @@ Proposals land in the approval queue; a second person approves them through
 ``/v1/approvals/{id}/approve``. Writes need the CSRF header like every signed-in write.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 
+from aml import jobs
 from aml.modules.access.api import ClientIp, TenantDb, now, require, require_csrf
 from aml.modules.access.approvals import Approval, ApprovalError
 from aml.modules.access.permissions import Permission
@@ -105,6 +106,17 @@ class RuleDetail(RuleOut):
     versions: list[RuleVersionOut]
 
 
+class LaneOut(BaseModel):
+    lane: str
+    queued: int
+    running: int
+    failed: int
+    done: int = Field(description="Jobs finished in the last 24 hours")
+    p50_seconds: float | None = Field(description="Median time from queued to done")
+    p95_seconds: float | None
+    max_seconds: float | None
+
+
 class ProposalOut(BaseModel):
     rule_id: UUID
     version: int
@@ -159,6 +171,15 @@ def _problem(exc: RuleError | ApprovalError) -> ProblemError:
 @router.get("/rule-types", responses=_problems)
 def list_rule_types(user: Viewer) -> list[RuleTypeOut]:
     return [_type_out(kind) for kind in RULE_TYPES.values()]
+
+
+@router.get("/engine/status", responses=_problems)
+def engine_status(conn: TenantDb, user: Viewer) -> list[LaneOut]:
+    """Backlog per job lane and the measured evaluation time over the last day (RUL-6)."""
+    since = now() - timedelta(days=1)
+    return [
+        LaneOut.model_validate(lane, from_attributes=True) for lane in jobs.lane_status(conn, since)
+    ]
 
 
 @router.get("/rules", responses=_problems)

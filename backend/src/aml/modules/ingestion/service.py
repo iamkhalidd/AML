@@ -22,6 +22,7 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
+from aml import jobs
 from aml.modules.audit import store
 from aml.modules.ingestion.contract import (
     Account,
@@ -360,10 +361,12 @@ def _transaction(conn: psycopg.Connection, batch: Batch, raw: Any) -> bool:
             sql.SQL(", ").join(sql.Placeholder() for _ in values),
         )
         params = (batch.source_system, record.transaction_id, batch.id, status, *values.values())
-        if conn.execute(insert, params).fetchone() is None:
+        inserted = conn.execute(insert, params).fetchone()
+        if inserted is None:
             raise RecordRejectedError(
                 "DUPLICATE_CONFLICT", "transaction_id was created by a concurrent batch"
             )
+        _queue_evaluation(conn, inserted[0], status)
         return True
     txn_id, stored_status, *stored = found
     changed = [
@@ -381,7 +384,16 @@ def _transaction(conn: psycopg.Connection, batch: Batch, raw: Any) -> bool:
             f"status cannot change from {stored_status.upper()}; only PENDING may settle",
         )
     conn.execute("UPDATE txn SET status = %s WHERE id = %s", (status, txn_id))
+    _queue_evaluation(conn, txn_id, status)
     return True
+
+
+def _queue_evaluation(conn: psycopg.Connection, txn_id: Any, status: str) -> None:
+    """Hand the transaction to the event rules (RUL-6); once per transaction and status."""
+    jobs.enqueue(
+        conn, "evaluate", "evaluate_transaction", {"txn_id": str(txn_id)},
+        dedupe_key=f"evaluate:{txn_id}:{status}",
+    )  # fmt: skip
 
 
 def get_batch(conn: psycopg.Connection, batch_id: UUID) -> dict[str, Any] | None:

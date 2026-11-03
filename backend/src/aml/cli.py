@@ -1,4 +1,4 @@
-"""Operator command line: aml migrate | status | tenant | user | credential | audit verify.
+"""Operator command line: aml migrate | status | tenant | user | credential | audit | worker.
 
 Run from backend/ so .env is found. Every change is logged in the control plane with the
 operator's name, taken from AML_OPERATOR or the login name.
@@ -12,6 +12,7 @@ from collections.abc import Sequence
 
 import psycopg
 
+from aml import jobs, worker
 from aml.config import Settings
 from aml.control.audit_check import AuditCheck, check_fleet
 from aml.control.secrets import SecretStore
@@ -100,6 +101,9 @@ def _parser() -> argparse.ArgumentParser:
         help="daily job: verify each audit hash chain, record its digest, add partitions",
     )
     verify.add_argument("slugs", nargs="*", help="tenants to check (default: every active one)")
+    work = commands.add_parser("worker", help="work one job lane for every active tenant")
+    work.add_argument("--lane", required=True, choices=jobs.LANES)
+    work.add_argument("--once", action="store_true", help="one pass, then exit")
     return parser
 
 
@@ -194,6 +198,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "audit" and args.audit_command == "verify":
             intact = _print_checks(check_fleet(fleet, args.slugs))
             return 0 if intact else 1
+        elif args.command == "worker":
+            worker.run(fleet, args.lane, once=args.once)
     except (TenantError, AccessError, CredentialError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

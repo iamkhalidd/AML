@@ -78,6 +78,12 @@ def test_only_viewers_change_nothing() -> None:
 # --- Maker-checker against a real tenant database (ACC-4) -----------------------------------
 
 
+@pytest.fixture(autouse=True)
+def no_kind_handlers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests use made-up payloads, so modules' real handlers must not run on them."""
+    monkeypatch.setattr(approvals, "_handlers", {})
+
+
 @dataclass
 class Staff:
     url: str

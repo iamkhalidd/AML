@@ -159,8 +159,9 @@ def test_sign_in_failures_and_sign_out_are_recorded(conn: psycopg.Connection, ba
 
 @pytest.mark.requirement("AUD-1")
 def test_approvals_and_settings_changes_record_before_and_after(
-    conn: psycopg.Connection, bank: Bank
+    conn: psycopg.Connection, bank: Bank, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(approvals, "_handlers", {})  # the payload is not a real rule change
     mlro, deputy, admin = bank.users["mlro"], bank.users["deputy"], bank.users["admin"]
     start = last_seq(conn)
 

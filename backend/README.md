@@ -188,6 +188,24 @@ so a transaction waits for its account and a reversal for its original.
 and the 5-minute future check uses that batch's arrival time. Every resolution, and every
 hand retry, is audited. A staff review screen comes with the web interface.
 
+## Rules (RUL-2, RUL-3, RUL-5)
+
+`GET /v1/rule-types` lists the rule types the engine knows (R01â€“R05, R13) with their
+mode, schedule, default severity, default parameters and parameter JSON schema. Amounts
+are in kobo; the defaults are illustrative starting values, not regulatory figures.
+
+A rule is never edited in place. `POST /v1/rules` (type, name, rationale, and optionally
+scope, parameters, severity, preemptive, effective_from) adds a disabled rule and its
+version 1; `POST /v1/rules/{id}/versions` proposes the next version, changing only the
+fields sent and starting from the latest approved version. Each proposal is validated
+against the type's schema and goes to the approval queue as a `rule_change`; one change
+per rule can be pending. Approving it through `/v1/approvals/{id}/approve`, by someone
+other than the maker, makes the version count from its `effective_from`, which is never
+earlier than the approval. Earlier versions are kept unchanged, so alerts can always be
+explained by the parameters that raised them. `GET /v1/rules` and `GET /v1/rules/{id}`
+show the version in effect now, any pending approval, and the full version history.
+Analysts propose, compliance officers propose and approve, auditors only view.
+
 Checks, as CI runs them:
 
 ```bash

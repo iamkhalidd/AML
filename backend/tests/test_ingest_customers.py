@@ -467,4 +467,4 @@ def test_credential_tree_downgrades_and_upgrades(tenant: tuple[str, str]) -> Non
     migrations.downgrade("tenant", url, "t0004")
     with psycopg.connect(url) as conn:
         assert conn.execute("SELECT to_regclass('api_credential')").fetchone() == (None,)
-    assert migrations.upgrade("tenant", url) == "t0005"
+    assert migrations.upgrade("tenant", url) == migrations.head_revision("tenant")

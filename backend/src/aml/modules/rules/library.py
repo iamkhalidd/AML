@@ -1,4 +1,4 @@
-"""The starter rules R01 to R05 (RUL-1).
+"""The starter rules R01 to R05 and R13 (RUL-1).
 
 Each rule only looks at settled (``success``) transactions and returns hits whose trigger
 values carry everything its explanation needs (RUL-4): amounts in kobo, dates as Lagos
@@ -309,4 +309,54 @@ def velocity_spike(ctx: WindowContext) -> list[Hit]:
             "average_amount": round(average_value),
         }
         hits.append(Hit(customer_id, values, (), None, start, end))
+    return hits
+
+
+# --- R13 New account high activity ----------------------------------------------------------
+
+
+@scheduled_rule("R13")
+def new_account_activity(ctx: WindowContext) -> list[Hit]:
+    """Value through an account within ``new_account_days`` of opening reaches a threshold.
+
+    Counts settled customer transactions from the Lagos day the account opened. The rule
+    reports an account on the evaluated day its running total first reaches the threshold,
+    so each account is reported once.
+    """
+    p = ctx.parameters
+    day = ctx.window_start.astimezone(LAGOS).date()
+    rows = ctx.conn.execute(
+        sql.SQL(
+            "WITH fresh AS ("
+            "  SELECT a.id, a.customer_id, a.opened_date, a.currency,"
+            "    a.opened_date::timestamp AT TIME ZONE 'Africa/Lagos' AS opened_at,"
+            "    (a.opened_date + %(days)s)::timestamp AT TIME ZONE 'Africa/Lagos' AS cutoff"
+            "  FROM account a JOIN customer c ON c.id = a.customer_id"
+            "  WHERE {scope} AND a.opened_date <= %(day)s AND a.opened_date + %(days)s > %(day)s)"
+            " SELECT f.id, f.customer_id, f.opened_date, f.currency, f.opened_at,"
+            "   array_agg(t.id ORDER BY t.occurred_at, t.id), sum(t.amount),"
+            "   coalesce(sum(t.amount) FILTER (WHERE t.occurred_at < %(start)s), 0)"
+            " FROM fresh f JOIN txn t ON t.account_id = f.id"
+            " WHERE t.status = 'success' AND t.txn_type::text <> ALL(%(system)s)"
+            "   AND t.occurred_at >= f.opened_at AND t.occurred_at < least(f.cutoff, %(end)s)"
+            " GROUP BY f.id, f.customer_id, f.opened_date, f.currency, f.opened_at"
+        ).format(scope=ctx.in_scope("c")),
+        {
+            "days": p["new_account_days"], "day": day, "start": ctx.window_start,
+            "end": ctx.window_end, "system": list(SYSTEM_POSTINGS),
+        },
+    ).fetchall()  # fmt: skip
+    threshold = p["min_total_value_minor"]
+    hits = []
+    for account_id, customer_id, opened, currency, opened_at, txn_ids, total, before in rows:
+        if total < threshold or before >= threshold:
+            continue
+        values = {
+            "days": p["new_account_days"],
+            "opened": opened.isoformat(),
+            "amount": int(total),
+            "currency": currency,
+            "threshold": threshold,
+        }
+        hits.append(Hit(customer_id, values, tuple(txn_ids), account_id, opened_at, ctx.window_end))
     return hits

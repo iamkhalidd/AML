@@ -47,6 +47,7 @@ class RuleTypeOut(BaseModel):
     default_severity: str
     defaults: dict[str, Any]
     parameters_schema: dict[str, Any]
+    explanation: str = Field(description="Template for the plain-language alert explanation")
 
 
 class Scope(BaseModel):
@@ -134,6 +135,7 @@ def _type_out(kind: RuleType) -> RuleTypeOut:
         default_severity=kind.default_severity,
         defaults=kind.defaults(),
         parameters_schema=kind.parameters.model_json_schema(),
+        explanation=kind.explanation,
     )
 
 
@@ -207,6 +209,24 @@ def propose_rule(body: NewRuleIn, conn: TenantDb, user: Proposer, ip: ClientIp) 
         return _proposal_out(
             service.propose_new(conn, user, body.rule_type, _change(body), now=now(), ip=ip)
         )
+    except (RuleError, ApprovalError) as exc:
+        raise _problem(exc) from None
+
+
+@router.post(
+    "/rules/starter",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=_writes,
+    responses=_problems,
+)
+def propose_starter(conn: TenantDb, user: Proposer, ip: ClientIp) -> list[ProposalOut]:
+    """Propose the starter rules with their default parameters, each awaiting approval.
+
+    Rule types the institution already has a rule for are left alone, so this is safe to
+    call again; it then returns an empty list.
+    """
+    try:
+        return [_proposal_out(p) for p in service.propose_starter(conn, user, now=now(), ip=ip)]
     except (RuleError, ApprovalError) as exc:
         raise _problem(exc) from None
 

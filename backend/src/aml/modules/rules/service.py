@@ -21,6 +21,7 @@ from aml.modules.access.service import User
 from aml.modules.audit import store as audit
 from aml.modules.rules.types import (
     RULE_TYPES,
+    STARTER_RULES,
     ParametersInvalidError,
     Preemptive,
     RuleType,
@@ -28,6 +29,10 @@ from aml.modules.rules.types import (
 )
 
 SEVERITIES = ("low", "medium", "high")
+STARTER_RATIONALE = (
+    "Starter configuration with the illustrative defaults from the rule specifications;"
+    " calibrate and justify each threshold before relying on it"
+)
 
 
 class RuleError(Exception):
@@ -117,6 +122,29 @@ def propose_new(
             (kind.code, change.name.strip(), now),
         ).fetchone()[0]  # type: ignore[index]
         return _propose(conn, maker, rule_id, kind, base, change, now, ip)
+
+
+def propose_starter(
+    conn: psycopg.Connection, maker: User, *, now: datetime, ip: str | None = None
+) -> list[tuple[RuleVersion, Approval]]:
+    """Propose each starter rule the institution has no rule of that type for yet.
+
+    The rules start from their type's defaults and, like any new rule, stay disabled until
+    someone other than the maker approves each one. Running it again proposes nothing new.
+    """
+    if not allowed(maker.role, Permission.RULES_PROPOSE):
+        raise RuleError("PERMISSION_DENIED", "Your role cannot propose rule changes")
+    with conn.transaction():
+        conn.execute("LOCK TABLE rule_instance IN SHARE ROW EXCLUSIVE MODE")
+        have = {row[0] for row in conn.execute("SELECT DISTINCT rule_type FROM rule_instance")}
+        return [
+            propose_new(
+                conn, maker, code, Change(STARTER_RATIONALE, name=RULE_TYPES[code].name),
+                now=now, ip=ip,
+            )
+            for code in STARTER_RULES
+            if code not in have
+        ]  # fmt: skip
 
 
 def propose_change(

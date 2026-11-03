@@ -247,10 +247,21 @@ amounts in kobo and dates as Lagos calendar dates.
 | R03 Rapid pass-through | each transaction | debits within `window_hours` after a credit of at least `min_credit_minor` reach `min_debit_percent` of it |
 | R04 Dormant account surge | each transaction | after `dormant_days` Lagos days without customer activity (interest and fees do not count), a day's value reaches `min_daily_value_minor` |
 | R05 Velocity spike | hourly | the last hour's (or Lagos day's) count or value exceeds `multiple` times the trailing `lookback_days` average, above the value floor |
+| R13 New account high activity | daily, 02:00 Lagos | within `new_account_days` of opening, an account's value reaches `min_total_value_minor`; reported on the day it first does |
 
 Event rules fire once per pattern, on the transaction that completes it, whatever order
 transactions arrive in. R05 skips customers with less than `min_history_days` of
 history and logs each skip with the rule and window.
+
+Each rule type carries a plain-language explanation template, listed by
+`GET /v1/rule-types`. A finding's `explanation` fills it in with naira amounts and dates,
+for example "A cash deposit of ₦5,000,000 on 2 November 2026 met or exceeded the individual
+threshold of ₦5,000,000." The R13 wording is ours; the specifications give none.
+
+A new institution starts from `POST /v1/rules/starter` (needs `rules.propose`). It proposes
+every starter rule type the institution has no rule for yet, with the illustrative
+defaults, and each proposal waits for a second person's approval like any rule change.
+Calling it again proposes nothing.
 
 Checks, as CI runs them:
 

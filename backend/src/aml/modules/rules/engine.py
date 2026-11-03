@@ -24,6 +24,7 @@ from psycopg.rows import dict_row
 
 from aml import jobs
 from aml.modules.rules import service
+from aml.modules.rules.explain import explain
 from aml.modules.rules.service import Rule, RuleVersion
 from aml.modules.rules.types import RULE_TYPES, Mode
 
@@ -50,6 +51,11 @@ class Finding:
     version: RuleVersion
     hit: Hit
     evaluated_at: datetime
+
+    @property
+    def explanation(self) -> str:
+        """The plain-language explanation an analyst reads (RUL-4)."""
+        return explain(self.rule.rule_type, self.hit.trigger_values)
 
 
 @dataclass(frozen=True)

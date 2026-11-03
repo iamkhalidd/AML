@@ -89,6 +89,7 @@ class RuleType:
     preemptive: Preemptive
     default_severity: str
     parameters: type[Parameters]
+    explanation: str  # the plain-language template, filled in from a finding's values (RUL-4)
 
     def defaults(self) -> dict[str, Any]:
         return self.parameters().model_dump()
@@ -98,19 +99,34 @@ RULE_TYPES: dict[str, RuleType] = {
     t.code: t
     for t in (
         RuleType("R01", "High-value cash", Mode.EVENT, None, Preemptive.YES, "medium",
-                 HighValueCash),
+                 HighValueCash,
+                 "A cash {direction} of {amount} on {date} met or exceeded the {customer_type}"
+                 " threshold of {threshold}."),
         RuleType("R02", "Structuring below a reporting threshold", Mode.SCHEDULED,
-                 "daily 02:00", Preemptive.NO, "high", Structuring),
+                 "daily 02:00", Preemptive.NO, "high", Structuring,
+                 "{count} cash deposits between {low} and {high} over {days} days totalled"
+                 " {total}, each below the threshold of {threshold}."),
         RuleType("R03", "Rapid pass-through", Mode.EVENT, None, Preemptive.OPTIONAL, "high",
-                 PassThrough),
+                 PassThrough,
+                 "{credit} credited on {date} and {debit} ({percent}) left the account within"
+                 " {hours} hours."),
         RuleType("R04", "Dormant account surge", Mode.EVENT, None, Preemptive.OPTIONAL,
-                 "medium", DormantSurge),
+                 "medium", DormantSurge,
+                 "After {days} days with no activity, {amount} moved through the account on"
+                 " {date}."),
         RuleType("R05", "Velocity spike", Mode.SCHEDULED, "hourly", Preemptive.NO, "medium",
-                 VelocitySpike),
+                 VelocitySpike,
+                 "{count} transactions worth {amount} in {period}, which is {multiple} times"
+                 " the {days}-day average."),
         RuleType("R13", "New account high activity", Mode.SCHEDULED, "daily 02:00",
-                 Preemptive.NO, "medium", NewAccountActivity),
+                 Preemptive.NO, "medium", NewAccountActivity,
+                 "{amount} moved through an account opened on {opened}, within {days} days of"
+                 " opening, reaching the new-account threshold of {threshold}."),
     )
 }  # fmt: skip
+
+# The rules a new institution starts from: every type, with the illustrative defaults above.
+STARTER_RULES = tuple(RULE_TYPES)
 
 
 class ParametersInvalidError(ValueError):

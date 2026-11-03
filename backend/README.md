@@ -188,6 +188,36 @@ so a transaction waits for its account and a reversal for its original.
 and the 5-minute future check uses that batch's arrival time. Every resolution, and every
 hand retry, is audited. A staff review screen comes with the web interface.
 
+### CSV files (ING-2)
+
+For the MVP, batch files arrive through the API rather than SFTP; at the pilot an SFTP
+folder watcher can feed the same importer. `POST /v1/files/{customers|accounts|transactions}`
+takes one CSV file as the body (`Content-Type: text/csv`, at most 5 MB) with
+`?source_system=core&schema_version=0.1` and the file's SHA-256 in `X-Checksum-SHA256`:
+
+```bash
+curl -X POST "https://{tenant}/v1/files/transactions?source_system=core&schema_version=0.1" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/csv" \
+  -H "X-Checksum-SHA256: $(sha256sum txns.csv | cut -d' ' -f1)" --data-binary @txns.csv
+```
+
+The header row must match the template from `GET /v1/files/templates/{kind}` exactly. The
+templates follow the contract's field tables, with three differences: money is a decimal
+string such as `1500.50` (no sign, no thousand separators, at most two decimals), so its
+column drops the `_minor` suffix (`amount`, `declared_income_min`, ...); `source_system`
+and `schema_version` come with the upload instead of every row; and beneficial owners are
+sent through the API. Files are UTF-8, with or without a byte order mark. An empty cell
+leaves the field out.
+
+A checksum mismatch (`BATCH_CHECKSUM_FAILED`) or a header, encoding or CSV error
+(`BATCH_TEMPLATE_INVALID`) refuses the whole file with 422. The refusal is kept as a
+`failed` batch, which `GET /v1/batches/{id}` shows, and is audited as
+`ingestion.file_rejected`. Otherwise each row is checked like an API record, with `index`
+counting data rows from 0: a bad amount is `AMOUNT_INVALID` and a row with the wrong
+number of cells is `SCHEMA_INVALID`, held with its cells as received. A file batch keeps
+its checksum, and its audit entry records it. Sending the same file again only counts
+duplicates.
+
 ## Rules (RUL-2, RUL-3, RUL-5)
 
 `GET /v1/rule-types` lists the rule types the engine knows (R01â€“R05, R13) with their

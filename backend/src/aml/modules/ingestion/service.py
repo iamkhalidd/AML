@@ -29,6 +29,7 @@ from aml.modules.ingestion.contract import (
     Customer,
     RecordRejectedError,
     Transaction,
+    Unreadable,
     check,
 )
 
@@ -74,40 +75,40 @@ def _jsonb(value: Any) -> Jsonb:
 def ingest_customers(
     conn: psycopg.Connection, caller: Caller, source_system: str, records: Sequence[Any]
 ) -> BatchResult:
-    return _ingest(conn, caller, source_system, "customer", records, "customer_id", _customer)
+    return ingest(conn, caller, source_system, "customer", records)
 
 
 def ingest_accounts(
     conn: psycopg.Connection, caller: Caller, source_system: str, records: Sequence[Any]
 ) -> BatchResult:
-    return _ingest(conn, caller, source_system, "account", records, "account_id", _account)
+    return ingest(conn, caller, source_system, "account", records)
 
 
 def ingest_transactions(
     conn: psycopg.Connection, caller: Caller, source_system: str, records: Sequence[Any]
 ) -> BatchResult:
-    return _ingest(
-        conn, caller, source_system, "transaction", records, "transaction_id", _transaction
-    )
+    return ingest(conn, caller, source_system, "transaction", records)
 
 
 Handler = Callable[[psycopg.Connection, Batch, Any], bool]
 
 
-def _ingest(
+def ingest(
     conn: psycopg.Connection,
     caller: Caller,
     source_system: str,
     entity: str,
     records: Sequence[Any],
-    id_field: str,
-    handle: Handler,
+    *,
+    checksum: str | None = None,
 ) -> BatchResult:
+    """Store one batch of ``entity`` records; ``checksum`` is the file's, for a file upload."""
+    handle, id_field = _HANDLERS[entity], f"{entity}_id"
     with conn.transaction():
         row = conn.execute(
-            "INSERT INTO ingestion_batch (source_system, entity, submitted, status)"
-            " VALUES (%s, %s, %s, 'processing') RETURNING id, received_at",
-            (source_system, entity, len(records)),
+            "INSERT INTO ingestion_batch (source_system, entity, submitted, checksum, status)"
+            " VALUES (%s, %s, %s, %s, 'processing') RETURNING id, received_at",
+            (source_system, entity, len(records), checksum),
         ).fetchone()
         assert row is not None  # noqa: S101 - INSERT ... RETURNING always returns a row
         batch = Batch(row[0], source_system, row[1])
@@ -117,11 +118,12 @@ def _ingest(
                 with conn.transaction():  # a savepoint: one record's failure stays its own
                     changed = handle(conn, batch, raw)
             except RecordRejectedError as rejection:
+                kept = raw.raw if isinstance(raw, Unreadable) else raw
                 result.rejected += 1
                 result.errors.append(
                     {
                         "index": index,
-                        id_field: raw.get(id_field) if isinstance(raw, dict) else None,
+                        id_field: kept.get(id_field) if isinstance(kept, dict) else None,
                         "code": rejection.code,
                         "detail": rejection.detail,
                     }
@@ -129,7 +131,7 @@ def _ingest(
                 conn.execute(
                     "INSERT INTO dead_letter (batch_id, entity, raw, reason_code, reason_detail)"
                     " VALUES (%s, %s, %s, %s, %s)",
-                    (result.batch_id, entity, _jsonb(raw), rejection.code, rejection.detail),
+                    (result.batch_id, entity, _jsonb(kept), rejection.code, rejection.detail),
                 )
                 continue
             if changed:
@@ -158,7 +160,8 @@ def _ingest(
             object_id=result.batch_id,
             actor_type="system",
             actor_label=caller.label,
-            after={"source_system": source_system, **counts},
+            after={"source_system": source_system, **counts}
+            | ({"checksum": checksum} if checksum else {}),
             ip=caller.ip,
         )
         if result.accepted:

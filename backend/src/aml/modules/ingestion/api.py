@@ -1,8 +1,9 @@
-"""Integration API for the institution's systems (API specification; ING-1, ING-5, CUS-1, CUS-6).
+"""Integration API for the institution's systems (API specification; ING-1, ING-2, ING-5, CUS-1).
 
 Callers authenticate with a bearer credential, not a staff session, so these endpoints
 need no CSRF token. A well-formed request answers 200 even when some records fail; the
-response lists each rejected record by index. 400 means the whole request is malformed.
+response lists each rejected record by index. 400 means the whole request is malformed,
+and 422 that a whole file was refused.
 """
 
 from collections.abc import Callable
@@ -10,18 +11,18 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Body, Depends, Header, Query, Request, Response
 from pydantic import BaseModel, Field, StringConstraints
 
 from aml.modules.access.api import ClientIp, TenantDb, now
-from aml.modules.ingestion import credentials, service
+from aml.modules.ingestion import credentials, files, service
 from aml.modules.ingestion.contract import SCHEMA_VERSION
 from aml.modules.ingestion.credentials import Credential
 from aml.problems import ProblemBody, ProblemError
 
 router = APIRouter(prefix="/v1", tags=["integration"])
 _problems: dict[int | str, dict[str, object]] = {
-    code: {"model": ProblemBody} for code in (400, 401, 403, 404, 409, 413)
+    code: {"model": ProblemBody} for code in (400, 401, 403, 404, 409, 413, 422)
 }
 
 MAX_CUSTOMERS = 500
@@ -122,6 +123,61 @@ def submit_transactions(
     caller = service.Caller(credential.label, ip)
     return _out(
         service.ingest_transactions(conn, caller, submission.source_system, submission.records)
+    )
+
+
+FileKind = Literal["customers", "accounts", "transactions"]
+_ENTITY = {"customers": "customer", "accounts": "account", "transactions": "transaction"}
+
+
+@router.post("/files/{kind}", responses=_problems)
+def upload_file(
+    kind: FileKind,
+    source_system: SourceSystem,
+    schema_version: str,
+    checksum: Annotated[str, Header(alias="X-Checksum-SHA256")],
+    conn: TenantDb,
+    credential: Ingest,
+    ip: ClientIp,
+    content: Annotated[bytes, Body(media_type="text/csv")] = b"",
+) -> BatchOut:
+    """Upload a CSV file of one entity, with its SHA-256 checksum, as one batch (ING-2).
+
+    Send the file as the body with ``Content-Type: text/csv``. A checksum mismatch or a
+    header that differs from the template refuses the whole file with 422.
+    """
+    if schema_version != SCHEMA_VERSION:
+        raise ProblemError(
+            400, "SCHEMA_VERSION_UNSUPPORTED", "Unsupported schema_version",
+            f"schema_version must be {SCHEMA_VERSION}",
+        )  # fmt: skip
+    if len(content) > files.MAX_FILE_BYTES:
+        raise ProblemError(
+            413, "FILE_TOO_LARGE", "File too large",
+            f"Send at most {files.MAX_FILE_BYTES // (1024 * 1024)} MB per file",
+        )  # fmt: skip
+    caller = service.Caller(credential.label, ip)
+    try:
+        result = files.import_file(conn, caller, source_system, _ENTITY[kind], content, checksum)
+    except files.FileRejectedError as rejection:
+        conn.commit()  # keep the refused file on record; the error response would roll it back
+        raise ProblemError(
+            422, rejection.code, "File refused", f"{rejection.detail} (batch {rejection.batch_id})"
+        ) from rejection
+    return _out(result)
+
+
+@router.get(
+    "/files/templates/{kind}",
+    responses=_problems | {200: {"content": {"text/csv": {}}}},
+    response_class=Response,
+)
+def file_template(kind: FileKind, credential: Ingest) -> Response:
+    """The header row a file of this kind must start with."""
+    return Response(
+        files.template(_ENTITY[kind]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{kind}_template.csv"'},
     )
 
 

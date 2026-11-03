@@ -5,6 +5,7 @@ returns the validated record or the contract's error code with a detail that nam
 field, never the rejected value (it may be personal data).
 """
 
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -220,7 +221,22 @@ class RecordRejectedError(Exception):
         self.code, self.detail = code, detail
 
 
+@dataclass(frozen=True)
+class Unreadable:
+    """A record that could not be read into fields, such as a ragged CSV row.
+
+    ``raw`` is what arrived, kept in the dead-letter store; the record is rejected with
+    ``code`` and ``detail``.
+    """
+
+    raw: Any
+    code: str
+    detail: str
+
+
 def check[R: Record](model: type[R], raw: Any) -> R:
+    if isinstance(raw, Unreadable):
+        raise RecordRejectedError(raw.code, raw.detail)
     if not isinstance(raw, dict):
         raise RecordRejectedError("SCHEMA_INVALID", "record must be an object")
     try:

@@ -11,8 +11,9 @@ Rules always run with the approved version in effect when the job runs. What a r
 goes to the registered finding sinks; alerts (story 3.1) are one.
 """
 
+import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -27,6 +28,8 @@ from aml.modules.rules.service import Rule, RuleVersion
 from aml.modules.rules.types import RULE_TYPES, Mode
 
 LAGOS = ZoneInfo("Africa/Lagos")
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -70,10 +73,19 @@ class WindowContext:
     window_start: datetime
     window_end: datetime
     now: datetime
+    skipped: list[tuple[Any, str]] = field(default_factory=list)
 
     @property
     def parameters(self) -> dict[str, Any]:
         return self.version.parameters
+
+    def skip(self, customer_id: Any, reason: str) -> None:
+        """Record that a customer in scope could not be evaluated for this window, and why."""
+        self.skipped.append((customer_id, reason))
+        log.info(
+            "rule %s skipped customer %s for %s to %s: %s", self.rule.id, customer_id,
+            self.window_start.isoformat(), self.window_end.isoformat(), reason,
+        )  # fmt: skip
 
     def in_scope(self, customer: str = "c") -> sql.Composable:
         """A condition on the customer table alias that keeps customers in the rule's scope."""

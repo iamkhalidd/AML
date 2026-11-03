@@ -14,7 +14,7 @@ import psycopg
 
 from aml import jobs
 from aml.control.tenants import Fleet, list_tenants
-from aml.modules.rules import engine
+from aml.modules.rules import engine, library  # noqa: F401 - registers the starter rules
 
 log = logging.getLogger(__name__)
 

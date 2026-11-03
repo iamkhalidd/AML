@@ -234,6 +234,24 @@ compliance officers, analysts and auditors) shows each lane's backlog and how lo
 hours took from queueing to done (p50, p95 and max). This is the measured evaluation time
 the institution sees.
 
+## Starter rules (RUL-1, RUL-4)
+
+`src/aml/modules/rules/library.py` holds the starter rules. They look only at settled
+(`SUCCESS`) transactions, and each finding carries the values its explanation needs:
+amounts in kobo and dates as Lagos calendar dates.
+
+| Rule | Runs | Fires when |
+| --- | --- | --- |
+| R01 High-value cash | each transaction | one cash transaction is at or above the threshold for the customer's type |
+| R02 Structuring | daily, 02:00 Lagos | over `window_days`, at least `min_count` cash deposits each between `lower_percent` and `upper_percent` of the threshold total at least `total_percent` of it, with one on the day evaluated |
+| R03 Rapid pass-through | each transaction | debits within `window_hours` after a credit of at least `min_credit_minor` reach `min_debit_percent` of it |
+| R04 Dormant account surge | each transaction | after `dormant_days` Lagos days without customer activity (interest and fees do not count), a day's value reaches `min_daily_value_minor` |
+| R05 Velocity spike | hourly | the last hour's (or Lagos day's) count or value exceeds `multiple` times the trailing `lookback_days` average, above the value floor |
+
+Event rules fire once per pattern, on the transaction that completes it, whatever order
+transactions arrive in. R05 skips customers with less than `min_history_days` of
+history and logs each skip with the rule and window.
+
 Checks, as CI runs them:
 
 ```bash

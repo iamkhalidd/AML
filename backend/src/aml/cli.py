@@ -1,4 +1,4 @@
-"""Operator command line: aml migrate | status | tenant ... | user create | audit verify.
+"""Operator command line: aml migrate | status | tenant | user | credential | audit verify.
 
 Run from backend/ so .env is found. Every change is logged in the control plane with the
 operator's name, taken from AML_OPERATOR or the login name.
@@ -28,6 +28,13 @@ from aml.control.tenants import (
 )
 from aml.modules.access.security import SecretCipher
 from aml.modules.access.service import ROLES, AccessError, create_user
+from aml.modules.ingestion.credentials import (
+    SCOPES,
+    CredentialError,
+    create_credential,
+    list_credentials,
+    revoke_credential,
+)
 
 
 def build_fleet(settings: Settings) -> Fleet:
@@ -67,6 +74,25 @@ def _parser() -> argparse.ArgumentParser:
     create_user_cmd.add_argument("--email", required=True)
     create_user_cmd.add_argument("--name", required=True, help="full name")
     create_user_cmd.add_argument("--role", choices=ROLES, default="administrator")
+    credential = commands.add_parser("credential", help="manage integration API credentials")
+    credential_commands = credential.add_subparsers(dest="credential_command", required=True)
+    create_credential_cmd = credential_commands.add_parser(
+        "create", help="create a bearer credential; the token is printed once"
+    )
+    create_credential_cmd.add_argument("slug", help="tenant")
+    create_credential_cmd.add_argument("--name", required=True, help="for example core-banking")
+    create_credential_cmd.add_argument(
+        "--scope", action="append", choices=SCOPES, required=True, dest="scopes"
+    )
+    create_credential_cmd.add_argument("--days", type=int, default=90, help="lifetime (max 365)")
+    create_credential_cmd.add_argument(
+        "--allow-ip", action="append", dest="allowed_ips", help="address or CIDR range"
+    )
+    list_credential_cmd = credential_commands.add_parser("list", help="list credentials")
+    list_credential_cmd.add_argument("slug", help="tenant")
+    revoke = credential_commands.add_parser("revoke", help="revoke a credential at once")
+    revoke.add_argument("slug", help="tenant")
+    revoke.add_argument("--name", required=True)
     audit = commands.add_parser("audit", help="check tenants' audit trails")
     audit_commands = audit.add_subparsers(dest="audit_command", required=True)
     verify = audit_commands.add_parser(
@@ -97,6 +123,31 @@ def _create_user(fleet: Fleet, settings: Settings, args: argparse.Namespace) -> 
     print(f"{user.email}: {user.role} created")
     print("Add this to the user's authenticator app now; it is not shown again:")
     print(uri)
+
+
+def _credential(fleet: Fleet, args: argparse.Namespace) -> None:
+    url = fleet.secrets.get(get_tenant(fleet, args.slug).slug)
+    with psycopg.connect(url) as conn:
+        if args.credential_command == "create":
+            created, token = create_credential(
+                conn,
+                name=args.name,
+                scopes=args.scopes,
+                days=args.days,
+                operator=fleet.actor,
+                allowed_ips=args.allowed_ips,
+            )
+            scopes = ", ".join(created.scopes)
+            print(f"{created.name}: {scopes} until {created.expires_at:%Y-%m-%d}")
+            print("Give this token to the institution now; it is not shown again:")
+            print(token)
+        elif args.credential_command == "list":
+            for item in list_credentials(conn):
+                state = "revoked" if item.revoked_at else f"expires {item.expires_at:%Y-%m-%d}"
+                print(f"{item.name:<24} {state:<20} {', '.join(item.scopes)}")
+        else:
+            revoke_credential(conn, args.name, operator=fleet.actor)
+            print(f"{args.name}: revoked")
 
 
 def _print_status(rows: list[DatabaseStatus]) -> None:
@@ -138,10 +189,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"{args.slug}: removed")
         elif args.command == "user" and args.user_command == "create":
             _create_user(fleet, settings, args)
+        elif args.command == "credential":
+            _credential(fleet, args)
         elif args.command == "audit" and args.audit_command == "verify":
             intact = _print_checks(check_fleet(fleet, args.slugs))
             return 0 if intact else 1
-    except (TenantError, AccessError) as exc:
+    except (TenantError, AccessError, CredentialError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     return 0

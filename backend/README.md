@@ -137,6 +137,32 @@ upper-case wire values. A completed batch's counts must add up (submitted = acce
 duplicates + rejected), and a dead letter has a resolution time exactly when it is no longer
 held.
 
+## Integration API: customers and accounts (CUS-1, CUS-6, KYC-1, ING-3)
+
+The bank's systems call `/v1` with a bearer credential, never a staff session. An operator
+creates one per system; the token is printed once and only its SHA-256 is stored:
+
+```bash
+uv run aml credential create <slug> --name core-banking --scope ingest:write --days 90 --allow-ip 10.0.0.0/24
+uv run aml credential list <slug>
+uv run aml credential revoke <slug> --name core-banking
+```
+
+Credentials always expire (at most 365 days), can be revoked at once, and with `--allow-ip`
+work only from those ranges. Creating and revoking one is audited.
+
+`POST /v1/customers` and `POST /v1/accounts` take `{schema_version: "0.1", source_system,
+records: [...]}`, up to 500 records. A well-formed call answers 200 with `batch_id`,
+`submitted`, `accepted`, `duplicates`, `rejected` and `errors` (index, ID, code, detail); a
+bad record never sinks the batch. Codes follow the data contract: `SCHEMA_INVALID`,
+`ENUM_INVALID`, `AMOUNT_INVALID`, `REFERENCE_NOT_FOUND` (an account whose customer is not
+known yet) and `DUPLICATE_CONFLICT`. Rejected records are kept in `dead_letter` as held.
+Resending a record unchanged counts as a duplicate; a changed customer gets a new version
+with a snapshot of what was received. Beneficial owners are updated but never deleted.
+`GET /v1/batches/{id}` reads a batch back. Each batch writes one audit entry with its counts.
+The whole request is refused with 400 for a wrong `schema_version` or malformed body, and with
+413 above the record limit.
+
 Checks, as CI runs them:
 
 ```bash

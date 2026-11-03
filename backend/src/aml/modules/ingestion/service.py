@@ -5,6 +5,10 @@ A call is one batch. Every record is counted once: accepted (new or changed), du
 the contract's error code). The counts always add up. A customer change raises its
 version and keeps a snapshot of what was received, so earlier states can be shown later.
 A transaction never changes once accepted, except that a PENDING one may settle once.
+
+A record held because its reference was missing is retried automatically after every
+batch that accepts something from the same source; any held record can also be retried
+by hand. A retried record keeps the batch it arrived in, and counts as of that arrival.
 """
 
 import json
@@ -156,6 +160,8 @@ def _ingest(
             after={"source_system": source_system, **counts},
             ip=caller.ip,
         )
+        if result.accepted:
+            reprocess_waiting(conn, caller, source_system)
     return result
 
 
@@ -393,3 +399,134 @@ def get_batch(conn: psycopg.Connection, batch_id: UUID) -> dict[str, Any] | None
     batch = dict(zip(keys, row[:-1], strict=True))
     batch["errors"] = (row[-1] or {}).get("errors", [])
     return batch
+
+
+_HANDLERS: dict[str, Handler] = {
+    "customer": _customer,
+    "account": _account,
+    "transaction": _transaction,
+}
+_DEAD_LETTER_COLUMNS = (
+    "id", "batch_id", "source_system", "entity", "raw", "reason_code", "reason_detail",
+    "status", "created_at", "resolved_at",
+)  # fmt: skip
+_DEAD_LETTER_SELECT = (
+    "SELECT d.id, d.batch_id, b.source_system, d.entity, d.raw, d.reason_code,"
+    " d.reason_detail, d.status, d.created_at, d.resolved_at"
+    " FROM dead_letter d JOIN ingestion_batch b ON b.id = d.batch_id"
+)
+
+
+def list_dead_letters(
+    conn: psycopg.Connection,
+    *,
+    status: str | None = None,
+    entity: str | None = None,
+    batch_id: UUID | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Newest first, optionally narrowed by status, entity and batch."""
+    filters = {"d.status": status, "d.entity": entity, "d.batch_id": batch_id}
+    wanted = {column: value for column, value in filters.items() if value is not None}
+    where = sql.SQL(" AND ").join(
+        sql.SQL("{} = %s").format(sql.Identifier(*column.split("."))) for column in wanted
+    )
+    query = sql.SQL("{} WHERE {} ORDER BY d.created_at DESC, d.id LIMIT %s").format(
+        sql.SQL(_DEAD_LETTER_SELECT), where if wanted else sql.SQL("true")
+    )
+    found = conn.execute(query, (*wanted.values(), limit)).fetchall()
+    return [dict(zip(_DEAD_LETTER_COLUMNS, row, strict=True)) for row in found]
+
+
+def get_dead_letter(conn: psycopg.Connection, letter_id: UUID) -> dict[str, Any] | None:
+    row = conn.execute(f"{_DEAD_LETTER_SELECT} WHERE d.id = %s", (letter_id,)).fetchone()
+    return None if row is None else dict(zip(_DEAD_LETTER_COLUMNS, row, strict=True))
+
+
+class NotHeldError(Exception):
+    """Only a held record can be retried."""
+
+
+def reprocess(conn: psycopg.Connection, caller: Caller, letter_id: UUID) -> dict[str, Any] | None:
+    """Retry one held record by hand; None if there is no such record."""
+    with conn.transaction():
+        letter = get_dead_letter(conn, letter_id)
+        if letter is None:
+            return None
+        if letter["status"] != "held":
+            raise NotHeldError(letter["status"])
+        _retry(conn, caller, letter_id, automatic=False)
+    return get_dead_letter(conn, letter_id)
+
+
+def reprocess_waiting(conn: psycopg.Connection, caller: Caller, source_system: str) -> int:
+    """Retry records held for a missing reference until none more resolve; returns how many did.
+
+    Passes repeat because one resolved record can unblock another, as a reversal waits for
+    its original.
+    """
+    resolved = 0
+    while True:
+        waiting = conn.execute(
+            "SELECT d.id FROM dead_letter d JOIN ingestion_batch b ON b.id = d.batch_id"
+            " WHERE d.status = 'held' AND d.reason_code = 'REFERENCE_NOT_FOUND'"
+            " AND b.source_system = %s"
+            " ORDER BY array_position(ARRAY['customer', 'account', 'transaction'], d.entity),"
+            " d.created_at, d.id",
+            (source_system,),
+        ).fetchall()
+        progress = sum(_retry(conn, caller, row[0], automatic=True) for row in waiting)
+        if not progress:
+            return resolved
+        resolved += progress
+
+
+def _retry(conn: psycopg.Connection, caller: Caller, letter_id: UUID, *, automatic: bool) -> bool:
+    letter = conn.execute(
+        "SELECT d.entity, d.raw, d.reason_code, d.reason_detail, b.id, b.source_system,"
+        " b.received_at FROM dead_letter d JOIN ingestion_batch b ON b.id = d.batch_id"
+        " WHERE d.id = %s AND d.status = 'held' FOR UPDATE OF d",
+        (letter_id,),
+    ).fetchone()
+    if letter is None:  # resolved meanwhile
+        return False
+    entity, raw, code, detail, *batch = letter
+    before = {"status": "held", "reason_code": code}
+    try:
+        with conn.transaction():
+            _HANDLERS[entity](conn, Batch(*batch), raw)
+    except RecordRejectedError as rejection:
+        if (rejection.code, rejection.detail) != (code, detail):
+            conn.execute(
+                "UPDATE dead_letter SET reason_code = %s, reason_detail = %s WHERE id = %s",
+                (rejection.code, rejection.detail, letter_id),
+            )
+        if not automatic:
+            store.record(
+                conn,
+                "ingestion.dead_letter_retried",
+                object_type="dead_letter",
+                object_id=letter_id,
+                actor_type="system",
+                actor_label=caller.label,
+                before=before,
+                after={"status": "held", "reason_code": rejection.code},
+                ip=caller.ip,
+            )
+        return False
+    conn.execute(
+        "UPDATE dead_letter SET status = 'reprocessed', resolved_at = now() WHERE id = %s",
+        (letter_id,),
+    )
+    store.record(
+        conn,
+        "ingestion.dead_letter_reprocessed",
+        object_type="dead_letter",
+        object_id=letter_id,
+        actor_type="system",
+        actor_label=caller.label,
+        before=before,
+        after={"status": "reprocessed", "automatic": automatic},
+        ip=caller.ip,
+    )
+    return True

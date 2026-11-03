@@ -7,10 +7,10 @@ response lists each rejected record by index. 400 means the whole request is mal
 
 from collections.abc import Callable
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field, StringConstraints
 
 from aml.modules.access.api import ClientIp, TenantDb, now
@@ -21,7 +21,7 @@ from aml.problems import ProblemBody, ProblemError
 
 router = APIRouter(prefix="/v1", tags=["integration"])
 _problems: dict[int | str, dict[str, object]] = {
-    code: {"model": ProblemBody} for code in (400, 401, 403, 404, 413)
+    code: {"model": ProblemBody} for code in (400, 401, 403, 404, 409, 413)
 }
 
 MAX_CUSTOMERS = 500
@@ -123,6 +123,55 @@ def submit_transactions(
     return _out(
         service.ingest_transactions(conn, caller, submission.source_system, submission.records)
     )
+
+
+class DeadLetterOut(BaseModel):
+    id: UUID
+    batch_id: UUID
+    source_system: str
+    entity: str
+    raw: Any
+    reason_code: str
+    reason_detail: str | None
+    status: str
+    created_at: datetime
+    resolved_at: datetime | None
+
+
+class DeadLetterList(BaseModel):
+    items: list[DeadLetterOut]
+
+
+@router.get("/dead-letters", responses=_problems)
+def list_dead_letters(
+    conn: TenantDb,
+    credential: Ingest,
+    status: Literal["held", "reprocessed", "discarded"] | None = None,
+    entity: Literal["customer", "account", "transaction"] | None = None,
+    batch_id: UUID | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> DeadLetterList:
+    """Held and resolved records, newest first (ING-3)."""
+    letters = service.list_dead_letters(
+        conn, status=status, entity=entity, batch_id=batch_id, limit=limit
+    )
+    return DeadLetterList(items=[DeadLetterOut.model_validate(letter) for letter in letters])
+
+
+@router.post("/dead-letters/{letter_id}/reprocess", responses=_problems)
+def reprocess_dead_letter(
+    letter_id: UUID, conn: TenantDb, credential: Ingest, ip: ClientIp
+) -> DeadLetterOut:
+    """Retry a held record. It stays held, with the new reason, if it fails again."""
+    try:
+        letter = service.reprocess(conn, service.Caller(credential.label, ip), letter_id)
+    except service.NotHeldError as error:
+        raise ProblemError(
+            409, "DEAD_LETTER_RESOLVED", "Record already resolved", f"Its status is {error}"
+        ) from error
+    if letter is None:
+        raise ProblemError(404, "DEAD_LETTER_NOT_FOUND", "No dead-letter record with this ID")
+    return DeadLetterOut.model_validate(letter)
 
 
 @router.get("/batches/{batch_id}", responses=_problems)

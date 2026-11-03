@@ -176,6 +176,18 @@ written in another offset. Once accepted, a transaction never changes, except th
 `PENDING` one may settle to `SUCCESS`, `FAILED` or `REVERSED`; any other difference is
 `DUPLICATE_CONFLICT`, naming the fields.
 
+### Dead letters (ING-3)
+
+Every rejected record stays in `dead_letter` as `held`. `GET /v1/dead-letters` lists them
+newest first, filtered by `status` (`held`, `reprocessed`, `discarded`), `entity`, `batch_id`
+and `limit` (at most 500). A record held as `REFERENCE_NOT_FOUND` is retried automatically
+after each batch from the same source that accepts something, until nothing more resolves,
+so a transaction waits for its account and a reversal for its original.
+`POST /v1/dead-letters/{id}/reprocess` retries any held record by hand: it becomes
+`reprocessed`, or stays held with the new reason. Either way it keeps its original batch,
+and the 5-minute future check uses that batch's arrival time. Every resolution, and every
+hand retry, is audited. A staff review screen comes with the web interface.
+
 Checks, as CI runs them:
 
 ```bash

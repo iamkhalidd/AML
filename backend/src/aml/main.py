@@ -11,6 +11,7 @@ from aml.modules.access import api as access_api
 from aml.modules.access import approvals_api
 from aml.modules.admin import api as admin_api
 from aml.modules.alerts import api as alerts_api
+from aml.modules.audit import api as audit_api
 from aml.modules.cases import api as cases_api
 from aml.modules.customers import api as customers_api
 from aml.modules.ingestion import api as ingestion_api
@@ -40,6 +41,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_api.router)
     app.include_router(approvals_api.router)
     app.include_router(alerts_api.router)
+    app.include_router(audit_api.router)
     app.include_router(cases_api.router)
     app.include_router(customers_api.router)
     app.include_router(reports_api.router)

@@ -471,10 +471,21 @@ feed's `risk_rating` everywhere, including alert severity, and later feed update
 undo it. The customer view shows the rating in force, the feed's rating and when a person
 last rated the customer.
 
+## Audit view and search (AUD-3)
+
+`GET /v1/audit` searches the audit trail (`audit.view`: auditors and compliance officers)
+by `user_id`, `actor_type`, `action` (exact, or a prefix such as `case`), `object_type`,
+`object_id` and a `date_from`/`date_to` range. Entries come newest first with who acted,
+what changed (before and after) and from which address; pass `next_before_seq` back as
+`before_seq` for the next page, which stays stable while new entries arrive. `GET
+/v1/audit/{seq}` returns one entry and `GET /v1/audit/facets` the object types and actions
+recorded, for the search form. The view only reads; the database still refuses any change
+to an entry.
+
 ## Stories awaiting tests
 
 Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 5.3, 6.1, 6.2, 6.3.
+have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 5.3, 6.1, 6.2, 6.3, 7.1.
 
 Checks, as CI runs them:
 

@@ -293,6 +293,25 @@ every starter rule type the institution has no rule for yet, with the illustrati
 defaults, and each proposal waits for a second person's approval like any rule change.
 Calling it again proposes nothing.
 
+## Alerts (AUD-7)
+
+Every rule finding becomes an alert, raised inside the evaluating job's transaction. An
+alert stores the rule version, the customer record version and the triggering
+transactions (`alert_txn`), so a trace shows exactly what fired and on what data. Its
+severity is the rule version's, raised one level for a customer rated high risk.
+
+A rule does not raise a second alert for the same customer and trigger window while one is
+open: the new transactions are added to that alert as evidence, and `hits` counts the
+findings. Event rules have no window, so their findings for one customer gather on a
+single open alert until it is closed. Each alert keeps a timeline in `alert_event`
+(`created`, `evidence_added`, ...), and the audit store records the same changes
+(`alert.created`, `alert.evidence_added`).
+
+## Stories awaiting tests
+
+Testing is paused while the system is built. These stories pass lint and type checks but
+have no tests yet: 3.1.
+
 Checks, as CI runs them:
 
 ```bash

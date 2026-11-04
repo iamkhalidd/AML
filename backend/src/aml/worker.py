@@ -14,6 +14,7 @@ import psycopg
 
 from aml import jobs
 from aml.control.tenants import Fleet, list_tenants
+from aml.modules.alerts import service as alerts  # noqa: F401 - registers the alert sink
 from aml.modules.rules import engine, library  # noqa: F401 - registers the starter rules
 
 log = logging.getLogger(__name__)

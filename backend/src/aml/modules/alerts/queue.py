@@ -19,6 +19,7 @@ from psycopg.rows import dict_row
 from aml.modules.access.permissions import Permission, allowed
 from aml.modules.access.service import User
 from aml.modules.audit import store
+from aml.modules.notifications import service as notify
 
 PAGE_SIZE = 50
 
@@ -234,6 +235,10 @@ def assign(
             after=after,
             ip=ip,
         )
+        notify.assigned(
+            conn, object_type="alert", object_id=alert_id, assignee_id=assignee_id,
+            assigned_by=user.id, now=now,
+        )  # fmt: skip
         row = get_listed(conn, alert_id)
     assert row is not None  # noqa: S101 - updated above
     return row

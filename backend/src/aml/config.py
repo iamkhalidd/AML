@@ -30,6 +30,15 @@ class Settings(BaseSettings):
     lockout_minutes: int = 15
     # Off only for plain-HTTP local development; every deployed environment uses TLS.
     cookie_secure: bool = True
+    # Outgoing email (ADM-3). Without a host, emails are written to the log instead.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_starttls: bool = True
+    mail_from: str = "aml@localhost"
+    # Base URL of the web app, used for links in emails.
+    app_url: str | None = None
     # Compiled frontend files, served by the app in containers. Unset in local development.
     static_dir: Path | None = None
 

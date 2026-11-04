@@ -23,6 +23,7 @@ from psycopg.types.json import Jsonb
 from aml.modules.access.permissions import Permission, allowed
 from aml.modules.access.service import User
 from aml.modules.audit import store as audit
+from aml.modules.notifications import service as notify
 
 # kind -> (permission to submit, permission to approve)
 KINDS: dict[str, tuple[Permission, Permission]] = {
@@ -111,6 +112,15 @@ def submit(
                     "rationale": rationale.strip(),
                 },
                 ip=ip,
+            )
+            notify.approval_pending(
+                conn,
+                approval_id=row["id"],  # type: ignore[index]
+                kind=kind,
+                rationale=rationale.strip(),
+                maker_id=maker.id,
+                permission=KINDS[kind][1],
+                now=now,
             )
     except UniqueViolation:
         raise ApprovalError(

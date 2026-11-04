@@ -1,7 +1,8 @@
 """Job workers: ``aml worker --lane evaluate`` works one lane for every active tenant (ADR-004).
 
 Run one or more workers per lane. Each pass visits every active tenant, queues due
-scheduled-rule windows when it works the ``scheduled_rule`` lane, and runs up to
+scheduled-rule windows when it works the ``scheduled_rule`` lane (and the day's ageing
+digest on the ``notification`` lane), and runs up to
 ``limit`` ready jobs per tenant.
 """
 
@@ -15,6 +16,7 @@ import psycopg
 from aml import jobs
 from aml.control.tenants import Fleet, list_tenants
 from aml.modules.alerts import service as alerts  # noqa: F401 - registers the alert sink
+from aml.modules.notifications import service as notifications
 from aml.modules.rules import engine, library  # noqa: F401 - registers the starter rules
 
 log = logging.getLogger(__name__)
@@ -25,6 +27,9 @@ def work_tenant(url: str, lane: str, worker: str, now: datetime, limit: int = 10
         if lane == "scheduled_rule":
             with conn.transaction():
                 engine.schedule_due(conn, now)
+        elif lane == notifications.LANE:
+            with conn.transaction():
+                notifications.schedule_digest(conn, now)
         return jobs.run_all(conn, lane, worker, now, limit)
 
 

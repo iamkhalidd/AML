@@ -444,10 +444,26 @@ institution setting as now in effect (closure reasons, CTR threshold, fallback a
 and the rest) with who set it and why, and `GET /v1/settings/{key}/versions` its history.
 The settings themselves are changed through their own endpoints, each versioned.
 
+## Email notifications (ADM-3)
+
+Users get email when an alert or case is assigned to them by someone else, when an
+approval waits for someone with their permissions, and in a daily digest (after 07:00
+local time) of open alerts and cases older than 7 days: assignees hear about their own,
+case-closure approvers about all of them. Each event queues one job per recipient in the
+`notification` lane in the same transaction, so only committed changes send email. Run a
+worker on that lane (`aml worker --lane notification`). `GET`/`PUT /v1/me/notifications`
+shows and turns off each kind; the choice is checked when the email is sent, so it also
+stops emails already queued. Every outcome (sent, logged, opted out, inactive) is kept in
+`notification_log` against its job, so a retry never sends twice.
+
+Set `AML_SMTP_HOST`, `AML_SMTP_PORT` (587), `AML_SMTP_USERNAME`, `AML_SMTP_PASSWORD`,
+`AML_SMTP_STARTTLS` (true) and `AML_MAIL_FROM`; without a host, emails are only logged.
+`AML_APP_URL` adds links to the web app.
+
 ## Stories awaiting tests
 
 Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 5.3, 6.1.
+have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 5.3, 6.1, 6.2.
 
 Checks, as CI runs them:
 

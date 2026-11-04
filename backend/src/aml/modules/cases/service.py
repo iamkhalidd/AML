@@ -22,6 +22,7 @@ from aml.modules.access.permissions import Permission, allowed
 from aml.modules.access.service import User
 from aml.modules.alerts import detail as alert_detail
 from aml.modules.audit import store
+from aml.modules.notifications import service as notify
 
 PAGE_SIZE = 50
 MAX_ALERTS_PER_ESCALATION = 100
@@ -380,6 +381,10 @@ def assign(
                 after={"assigned_to": change["after"]},
                 ip=ip,
             )
+            notify.assigned(
+                conn, object_type="case", object_id=case_id, assignee_id=assignee_id,
+                assigned_by=user.id, now=now,
+            )  # fmt: skip
         return _listed(conn, case_id)
 
 

@@ -1,4 +1,4 @@
-"""The alert queue, assignment and the alert detail (ALT-1, ALT-2, ALT-3, CUS-8).
+"""The alert queue, assignment, detail and closure (ALT-1 to ALT-4, CUS-8, ADM-2).
 
 The list is ordered most severe first, then oldest first, and any column can be re-sorted
 with ``sort`` (prefix ``-`` for descending). Pages hold 50 alerts by default; pass the
@@ -16,13 +16,19 @@ from pydantic import BaseModel, Field
 from aml.modules.access.api import ClientIp, TenantDb, now, require, require_csrf
 from aml.modules.access.permissions import Permission
 from aml.modules.access.service import User
-from aml.modules.alerts import detail, queue
+from aml.modules.alerts import closure, detail, queue
 from aml.modules.alerts.queue import AlertError, Filters
 from aml.problems import ProblemBody, ProblemError
 
 router = APIRouter(prefix="/v1", tags=["alerts"])
 
-_STATUS_FOR_CODE = {"ALERT_NOT_FOUND": 404, "CUSTOMER_NOT_FOUND": 404, "ALERT_CLOSED": 409}
+_STATUS_FOR_CODE = {
+    "ALERT_NOT_FOUND": 404,
+    "CUSTOMER_NOT_FOUND": 404,
+    "PERMISSION_DENIED": 403,
+    "ALERT_CLOSED": 409,
+    "ALERT_ESCALATED": 409,
+}
 _problems: dict[int | str, dict[str, object]] = {
     code: {"model": ProblemBody} for code in (400, 401, 403, 404, 409)
 }
@@ -30,6 +36,7 @@ _writes = [Depends(require_csrf)]
 
 Viewer = Annotated[User, Depends(require(Permission.ALERTS_VIEW))]
 Worker = Annotated[User, Depends(require(Permission.ALERTS_WORK))]
+SettingsManager = Annotated[User, Depends(require(Permission.SETTINGS_MANAGE))]
 Status = Literal["open", "in_review", "escalated", "closed"]
 Severity = Literal["low", "medium", "high"]
 
@@ -89,6 +96,26 @@ class AlertPage(BaseModel):
 
 class AssignIn(BaseModel):
     assignee_id: UUID | None = Field(description="Null takes the alert off its assignee")
+
+
+class Reason(BaseModel):
+    code: str = Field(min_length=1, max_length=50, examples=["false_positive"])
+    label: str = Field(min_length=1, max_length=200)
+
+
+class ReasonsIn(BaseModel):
+    reasons: list[Reason] = Field(min_length=1, max_length=closure.MAX_REASONS)
+    rationale: str = Field(min_length=1, max_length=2000, description="Why the list changes")
+
+
+class ReasonsOut(BaseModel):
+    reasons: list[Reason]
+    version: int | None = Field(default=None, description="Set when the list was just changed")
+
+
+class CloseIn(BaseModel):
+    reason: str = Field(min_length=1, max_length=50, description="A code from the reason list")
+    note: str = Field(min_length=1, max_length=5000)
 
 
 class NoteIn(BaseModel):
@@ -442,3 +469,40 @@ def get_customer_view(customer_id: UUID, conn: TenantDb, user: Viewer) -> Custom
         return customer_view_out(detail.customer_view(conn, customer_id, now=now()))
     except AlertError as exc:
         raise problem(exc) from None
+
+
+@router.get("/alert-closure-reasons", responses=_problems)
+def list_closure_reasons(conn: TenantDb, user: Viewer) -> ReasonsOut:
+    return ReasonsOut(reasons=[Reason.model_validate(r) for r in closure.reasons(conn, now())])
+
+
+@router.put("/alert-closure-reasons", dependencies=_writes, responses=_problems)
+def set_closure_reasons(
+    body: ReasonsIn, conn: TenantDb, user: SettingsManager, ip: ClientIp
+) -> ReasonsOut:
+    """Replace the institution's closure reasons. The change is versioned and audited."""
+    try:
+        version = closure.set_reasons(
+            conn,
+            user,
+            [r.model_dump() for r in body.reasons],
+            rationale=body.rationale,
+            now=now(),
+            ip=ip,
+        )
+    except AlertError as exc:
+        raise problem(exc) from None
+    return ReasonsOut(reasons=body.reasons, version=version)
+
+
+@router.post("/alerts/{alert_id}/close", dependencies=_writes, responses=_problems)
+def close_alert(
+    alert_id: UUID, body: CloseIn, conn: TenantDb, user: Worker, ip: ClientIp
+) -> AlertOut:
+    try:
+        row = closure.close(
+            conn, user, alert_id, reason=body.reason, note=body.note, now=now(), ip=ip
+        )
+    except AlertError as exc:
+        raise problem(exc) from None
+    return alert_out(row)

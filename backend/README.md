@@ -335,10 +335,21 @@ view on its own. Earlier cases join the view once cases are built.
 `POST /v1/alerts/{id}/notes` with `{"text": ...}` adds a note. Notes are timeline entries
 and are never edited; each is also recorded in the audit store (`alert.note_added`).
 
+## Closing alerts (ALT-4)
+
+`POST /v1/alerts/{id}/close` with `{"reason": ..., "note": ...}` closes an alert. Both are
+required, and the reason must be a code from the institution's list, which
+`GET /v1/alert-closure-reasons` returns. An administrator replaces the list with
+`PUT /v1/alert-closure-reasons` and a rationale; each change is a new setting version
+(`alert.closure_reasons`) and is audited. Until one is set, a starter list applies. A closed
+alert cannot be closed again or reassigned, and an escalated alert closes with its case.
+Closing writes a `closed` timeline entry and an `alert.close` audit entry, and frees the
+customer and window for a new alert.
+
 ## Stories awaiting tests
 
 Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1, 3.2, 3.3.
+have no tests yet: 3.1, 3.2, 3.3, 3.4.
 
 Checks, as CI runs them:
 

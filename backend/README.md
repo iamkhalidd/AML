@@ -322,10 +322,23 @@ with `{"assignee_id": ...}` assigns it to someone else, or unassigns it with `nu
 assignee must be an active user whose role works alerts, and a closed alert cannot be
 reassigned. Assigning an open alert puts it in review; unassigning puts it back to open.
 
+## Alert detail (ALT-2, CUS-8)
+
+`GET /v1/alerts/{id}` returns the alert with what fired: the rule version, its parameters
+and a link to the rule; the trigger values; the customer record version it was raised on;
+the linked transactions; notes; the full timeline; and the closure once closed. Its
+`customer_view` is the unified customer view: KYC status and date, risk, PEP flag,
+declared against actual activity (successful credits in the last 30 days), beneficial
+owners, accounts and up to 20 earlier alerts. `GET /v1/customers/{id}/view` returns the same
+view on its own. Earlier cases join the view once cases are built.
+
+`POST /v1/alerts/{id}/notes` with `{"text": ...}` adds a note. Notes are timeline entries
+and are never edited; each is also recorded in the audit store (`alert.note_added`).
+
 ## Stories awaiting tests
 
 Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1, 3.2.
+have no tests yet: 3.1, 3.2, 3.3.
 
 Checks, as CI runs them:
 

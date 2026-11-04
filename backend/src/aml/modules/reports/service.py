@@ -5,7 +5,8 @@ the case's alerts and transactions, and a starting narrative the analyst rewrite
 currency transaction report (CTR) is drafted for each settled cash transaction at or above
 the institution's threshold for the customer's type; a transaction goes on one CTR only.
 Content is in an internal format (``internal-v1``) until the NFIU format is confirmed
-(REP-5). A draft can be edited; once approved (REP-3) it is fixed.
+(REP-5). A draft can be edited until approval is requested; once approved (REP-3) it is
+fixed.
 """
 
 import base64
@@ -29,6 +30,7 @@ FORMAT = "internal-v1"
 PAGE_SIZE = 50
 MAX_CTRS_PER_RUN = 500
 MAX_NARRATIVE = 20_000
+STR_PLACEHOLDER = "[state why the activity is suspicious"
 
 CTR_KEY = "report.ctr_threshold"
 # Illustrative: the cash reporting thresholds in the Money Laundering (Prevention and
@@ -58,7 +60,9 @@ SELECT r.id, r.reference, r.report_type::text AS report_type, r.status::text AS 
        c.customer_type::text AS customer_type, c.risk_level::text AS customer_risk,
        r.created_by, cb.full_name AS created_by_name, r.created_at,
        r.updated_by, ub.full_name AS updated_by_name, r.updated_at,
-       r.approved_by, r.approved_at, r.submitted_by, r.submitted_at, r.submission_reference
+       r.approved_by, r.approved_at, r.submitted_by, r.submitted_at, r.submission_reference,
+       EXISTS (SELECT 1 FROM approval_request p WHERE p.kind = 'report_submission'
+               AND p.subject_id = r.id::text AND p.status = 'pending') AS approval_pending
 FROM report r
 JOIN customer c ON c.id = r.customer_id
 JOIN app_user cb ON cb.id = r.created_by
@@ -298,7 +302,7 @@ def draft_str(
                 for t in totals
             ),
             "",
-            "Grounds for suspicion: [state why the activity is suspicious, what the customer"
+            f"Grounds for suspicion: {STR_PLACEHOLDER}, what the customer"
             " said, and what was checked]",
         ]
         narrative = "\n".join(lines)
@@ -517,6 +521,15 @@ def update_draft(
         status, old_narrative, old_content = row
         if status != "draft":
             raise ReportError("REPORT_NOT_DRAFT", f"The report is {status} and cannot change")
+        pending = conn.execute(
+            "SELECT 1 FROM approval_request WHERE kind = 'report_submission'"
+            " AND subject_id = %s AND status = 'pending'",
+            (str(report_id),),
+        ).fetchone()
+        if pending is not None:
+            raise ReportError(
+                "APPROVAL_PENDING", "Withdraw the approval request before editing the draft"
+            )
         new_narrative = old_narrative if narrative is None else narrative
         new_content = old_content if content is None else content | {"format": FORMAT}
         conn.execute(

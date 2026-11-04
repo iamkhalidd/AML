@@ -404,10 +404,23 @@ or customer; `PATCH /v1/reports/{id}` edits a draft's narrative or content, audi
 before and after. Content is in an internal format (`internal-v1`) until the NFIU format
 is confirmed (REP-5).
 
+## Report approval and submission (REP-3)
+
+A report moves draft, approved, submitted. `POST /v1/reports/{id}/approval-request` with a
+note asks for approval; an STR whose narrative still holds the starter placeholder is
+refused. The request carries a SHA-256 fingerprint of the narrative and content, and the
+draft cannot be edited while it waits (withdraw it to edit). A second person with
+`reports.approve` approves through `POST /v1/approvals/{id}/approve`; neither the requester
+nor the drafter can, and approval fails if the report changed. `POST
+/v1/reports/{id}/submitted` with the NFIU's `submission_reference` marks an approved
+report filed (`reports.submit`). Each step records who and when, is audited
+(`report.approve`, `report.submit`), and appears on the case timeline for an STR. The
+report detail lists every approval request and its decision.
+
 ## Stories awaiting tests
 
 Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1.
+have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2.
 
 Checks, as CI runs them:
 

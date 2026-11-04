@@ -1,7 +1,8 @@
-"""Report drafts: STRs from cases and CTRs above the threshold (REP-1, REP-2).
+"""Reports: STR and CTR drafts, approval and submission status (REP-1 to REP-3).
 
 Writes need the CSRF header. Report content is in an internal format until the NFIU
-format is confirmed; approval and submission come with REP-3.
+format is confirmed. A second person approves a report through
+``/v1/approvals/{id}/approve``; then it can be marked submitted.
 """
 
 from datetime import datetime
@@ -16,7 +17,7 @@ from aml.modules.access.permissions import Permission
 from aml.modules.access.service import User
 from aml.modules.alerts.api import UserRef
 from aml.modules.cases.api import CustomerRef
-from aml.modules.reports import service
+from aml.modules.reports import service, workflow
 from aml.modules.reports.service import Filters, ReportError
 from aml.problems import ProblemBody, ProblemError
 
@@ -29,6 +30,10 @@ _STATUS_FOR_CODE = {
     "PERMISSION_DENIED": 403,
     "REPORT_EXISTS": 409,
     "REPORT_NOT_DRAFT": 409,
+    "REPORT_NOT_APPROVED": 409,
+    "REPORT_INCOMPLETE": 409,
+    "APPROVAL_PENDING": 409,
+    "APPROVAL_ALREADY_PENDING": 409,
 }
 _problems: dict[int | str, dict[str, object]] = {
     code: {"model": ProblemBody} for code in (400, 401, 403, 404, 409)
@@ -38,6 +43,7 @@ _writes = [Depends(require_csrf)]
 Viewer = Annotated[User, Depends(require(Permission.REPORTS_VIEW))]
 Drafter = Annotated[User, Depends(require(Permission.REPORTS_DRAFT))]
 Admin = Annotated[User, Depends(require(Permission.SETTINGS_MANAGE))]
+Submitter = Annotated[User, Depends(require(Permission.REPORTS_SUBMIT))]
 ReportType = Literal["str", "ctr"]
 ReportStatus = Literal["draft", "approved", "submitted"]
 
@@ -59,6 +65,7 @@ class ReportOut(BaseModel):
     submitted_by: UUID | None
     submitted_at: datetime | None
     submission_reference: str | None
+    approval_pending: bool = Field(description="An approval request is waiting")
 
 
 class ReportPage(BaseModel):
@@ -82,10 +89,40 @@ class ReportTxn(BaseModel):
     narration: str | None
 
 
+class ApprovalRequestOut(BaseModel):
+    approval_id: UUID
+    status: str
+    note: str
+    requested_by: UserRef
+    requested_at: datetime
+    decided_by: UserRef | None
+    decided_at: datetime | None
+    decision_note: str | None
+
+
+class ApprovalIn(BaseModel):
+    note: str = Field(min_length=1, max_length=2000, description="What the approver should check")
+
+
+class ApprovalRequested(BaseModel):
+    approval_id: UUID
+    status: str
+    requested_at: datetime
+
+
+class SubmittedIn(BaseModel):
+    submission_reference: str = Field(
+        min_length=1,
+        max_length=workflow.MAX_SUBMISSION_REFERENCE,
+        description="The reference the NFIU returned for the filing",
+    )
+
+
 class ReportDetail(ReportOut):
     narrative: str
     content: dict[str, Any] = Field(description=f"Prefilled fields, format {service.FORMAT}")
     transactions: list[ReportTxn]
+    approval_requests: list[ApprovalRequestOut]
 
 
 class ReportEdit(BaseModel):
@@ -140,6 +177,7 @@ def report_out(row: dict[str, Any]) -> ReportOut:
         submitted_by=row["submitted_by"],
         submitted_at=row["submitted_at"],
         submission_reference=row["submission_reference"],
+        approval_pending=row["approval_pending"],
     )
 
 
@@ -150,6 +188,23 @@ def _detail(conn: Any, report_id: Any) -> ReportDetail:
         narrative=row["narrative"],
         content=row["content"],
         transactions=[ReportTxn.model_validate(t) for t in row["transactions"]],
+        approval_requests=[_request_out(r) for r in workflow.requests_for(conn, report_id)],
+    )
+
+
+def _request_out(row: dict[str, Any]) -> ApprovalRequestOut:
+    decided_by = None
+    if row["checker_id"] is not None:
+        decided_by = UserRef(id=row["checker_id"], name=row["checker_name"])
+    return ApprovalRequestOut(
+        approval_id=row["id"],
+        status=row["status"],
+        note=row["rationale"],
+        requested_by=UserRef(id=row["maker_id"], name=row["maker_name"]),
+        requested_at=row["created_at"],
+        decided_by=decided_by,
+        decided_at=row["decided_at"],
+        decision_note=row["decision_note"],
     )
 
 
@@ -259,3 +314,43 @@ def set_ctr_threshold(
     except ReportError as exc:
         raise problem(exc) from None
     return CtrThreshold.model_validate(value)
+
+
+@router.post(
+    "/reports/{report_id}/approval-request",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=_writes,
+    responses=_problems,
+)
+def request_approval(
+    report_id: UUID, body: ApprovalIn, conn: TenantDb, user: Drafter, ip: ClientIp
+) -> ApprovalRequested:
+    """Ask a second person to approve the draft; it cannot change while the request waits."""
+    try:
+        approval = workflow.request_approval(
+            conn, user, report_id, note=body.note, now=now(), ip=ip
+        )
+    except ReportError as exc:
+        raise problem(exc) from None
+    return ApprovalRequested(
+        approval_id=approval.id, status=approval.status, requested_at=approval.created_at
+    )
+
+
+@router.post("/reports/{report_id}/submitted", dependencies=_writes, responses=_problems)
+def mark_submitted(
+    report_id: UUID, body: SubmittedIn, conn: TenantDb, user: Submitter, ip: ClientIp
+) -> ReportDetail:
+    """Record that the approved report was filed, with the NFIU's reference."""
+    try:
+        workflow.mark_submitted(
+            conn,
+            user,
+            report_id,
+            submission_reference=body.submission_reference,
+            now=now(),
+            ip=ip,
+        )
+        return _detail(conn, report_id)
+    except ReportError as exc:
+        raise problem(exc) from None

@@ -388,10 +388,26 @@ are never changed or removed, and appear in the workspace and on the timeline
 Malware scanning (CAS-6) is a pilot item. Storing files in Postgres keeps the backend free
 of a disk on Render; move them to object storage if volumes grow.
 
+## Report drafts (REP-1, REP-2)
+
+`POST /v1/cases/{id}/str` drafts the case's suspicious transaction report: the subject's
+details, accounts and beneficial owners, the case's alerts with their explanations, every
+transaction behind them with totals, and a starting narrative to rewrite. A case has one
+STR; the case timeline gets a `report_drafted` entry. `POST /v1/reports/ctr-runs` with a
+period drafts a currency transaction report for each settled cash transaction in it at or
+above the threshold for the customer's type. A transaction goes on one CTR only, so a run
+can repeat; each run drafts at most 500 and says whether more remain. The threshold is a
+versioned setting (`GET`/`PUT /v1/ctr-threshold`, administrators only); until one is set,
+₦5,000,000 for individuals and ₦10,000,000 for businesses apply, and each institution must
+confirm its own against regulation. `GET /v1/reports` lists reports by type, status, case
+or customer; `PATCH /v1/reports/{id}` edits a draft's narrative or content, audited with
+before and after. Content is in an internal format (`internal-v1`) until the NFIU format
+is confirmed (REP-5).
+
 ## Stories awaiting tests
 
 Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3.
+have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1.
 
 Checks, as CI runs them:
 

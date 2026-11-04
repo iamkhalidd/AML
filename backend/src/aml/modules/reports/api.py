@@ -1,0 +1,261 @@
+"""Report drafts: STRs from cases and CTRs above the threshold (REP-1, REP-2).
+
+Writes need the CSRF header. Report content is in an internal format until the NFIU
+format is confirmed; approval and submission come with REP-3.
+"""
+
+from datetime import datetime
+from typing import Annotated, Any, Literal
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel, Field
+
+from aml.modules.access.api import ClientIp, TenantDb, now, require, require_csrf
+from aml.modules.access.permissions import Permission
+from aml.modules.access.service import User
+from aml.modules.alerts.api import UserRef
+from aml.modules.cases.api import CustomerRef
+from aml.modules.reports import service
+from aml.modules.reports.service import Filters, ReportError
+from aml.problems import ProblemBody, ProblemError
+
+router = APIRouter(prefix="/v1", tags=["reports"])
+
+_STATUS_FOR_CODE = {
+    "REPORT_NOT_FOUND": 404,
+    "CASE_NOT_FOUND": 404,
+    "CUSTOMER_NOT_FOUND": 404,
+    "PERMISSION_DENIED": 403,
+    "REPORT_EXISTS": 409,
+    "REPORT_NOT_DRAFT": 409,
+}
+_problems: dict[int | str, dict[str, object]] = {
+    code: {"model": ProblemBody} for code in (400, 401, 403, 404, 409)
+}
+_writes = [Depends(require_csrf)]
+
+Viewer = Annotated[User, Depends(require(Permission.REPORTS_VIEW))]
+Drafter = Annotated[User, Depends(require(Permission.REPORTS_DRAFT))]
+Admin = Annotated[User, Depends(require(Permission.SETTINGS_MANAGE))]
+ReportType = Literal["str", "ctr"]
+ReportStatus = Literal["draft", "approved", "submitted"]
+
+
+class ReportOut(BaseModel):
+    id: UUID
+    reference: str = Field(examples=["STR-000007"])
+    report_type: ReportType
+    status: ReportStatus
+    case_id: UUID | None
+    case_reference: str | None
+    customer: CustomerRef
+    created_by: UserRef
+    created_at: datetime
+    updated_by: UserRef
+    updated_at: datetime
+    approved_by: UUID | None
+    approved_at: datetime | None
+    submitted_by: UUID | None
+    submitted_at: datetime | None
+    submission_reference: str | None
+
+
+class ReportPage(BaseModel):
+    items: list[ReportOut]
+    next_cursor: str | None
+
+
+class ReportTxn(BaseModel):
+    id: UUID
+    external_id: str
+    account_external_id: str
+    occurred_at: datetime
+    amount: int = Field(description="Minor units (kobo)")
+    currency: str
+    direction: str
+    channel: str
+    txn_type: str
+    status: str
+    counterparty_name: str | None
+    counterparty_account: str | None
+    narration: str | None
+
+
+class ReportDetail(ReportOut):
+    narrative: str
+    content: dict[str, Any] = Field(description=f"Prefilled fields, format {service.FORMAT}")
+    transactions: list[ReportTxn]
+
+
+class ReportEdit(BaseModel):
+    narrative: str | None = Field(None, max_length=service.MAX_NARRATIVE)
+    content: dict[str, Any] | None = Field(None, description="Replaces the whole content")
+
+
+class CtrRunIn(BaseModel):
+    date_from: datetime
+    date_to: datetime
+
+
+class CtrRunOut(BaseModel):
+    drafted: list[ReportOut]
+    more: bool = Field(description="More transactions qualify; run again for the rest")
+
+
+class CtrThreshold(BaseModel):
+    individual_minor: int = Field(gt=0, le=10**15, description="Kobo")
+    business_minor: int = Field(gt=0, le=10**15, description="Kobo")
+    currency: Literal["NGN"] = "NGN"
+    version: int = Field(0, description="Setting version; 0 is the starter default")
+
+
+class CtrThresholdIn(BaseModel):
+    individual_minor: int = Field(gt=0, le=10**15)
+    business_minor: int = Field(gt=0, le=10**15)
+    rationale: str = Field(min_length=1, max_length=2000)
+
+
+def report_out(row: dict[str, Any]) -> ReportOut:
+    return ReportOut(
+        id=row["id"],
+        reference=row["reference"],
+        report_type=row["report_type"],
+        status=row["status"],
+        case_id=row["case_id"],
+        case_reference=row["case_reference"],
+        customer=CustomerRef(
+            id=row["customer_id"],
+            external_id=row["customer_external_id"],
+            name=row["customer_name"],
+            customer_type=row["customer_type"],
+            risk_level=row["customer_risk"],
+        ),
+        created_by=UserRef(id=row["created_by"], name=row["created_by_name"]),
+        created_at=row["created_at"],
+        updated_by=UserRef(id=row["updated_by"], name=row["updated_by_name"]),
+        updated_at=row["updated_at"],
+        approved_by=row["approved_by"],
+        approved_at=row["approved_at"],
+        submitted_by=row["submitted_by"],
+        submitted_at=row["submitted_at"],
+        submission_reference=row["submission_reference"],
+    )
+
+
+def _detail(conn: Any, report_id: Any) -> ReportDetail:
+    row = service.get(conn, report_id)
+    return ReportDetail(
+        **report_out(row).model_dump(),
+        narrative=row["narrative"],
+        content=row["content"],
+        transactions=[ReportTxn.model_validate(t) for t in row["transactions"]],
+    )
+
+
+def problem(exc: ReportError) -> ProblemError:
+    return ProblemError(_STATUS_FOR_CODE.get(exc.code, 400), exc.code, exc.detail)
+
+
+@router.get("/reports", responses=_problems)
+def list_reports(
+    conn: TenantDb,
+    user: Viewer,
+    report_type: Annotated[list[ReportType] | None, Query(alias="type")] = None,
+    status: Annotated[list[ReportStatus] | None, Query()] = None,
+    case_id: UUID | None = None,
+    customer_id: UUID | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = service.PAGE_SIZE,
+    cursor: str | None = None,
+) -> ReportPage:
+    filters = Filters(
+        report_type=tuple(report_type or ()),
+        status=tuple(status or ()),
+        case_id=case_id,
+        customer_id=customer_id,
+    )
+    try:
+        rows, next_cursor = service.list_reports(conn, filters, limit=limit, cursor=cursor)
+    except ReportError as exc:
+        raise problem(exc) from None
+    return ReportPage(items=[report_out(row) for row in rows], next_cursor=next_cursor)
+
+
+@router.get("/reports/{report_id}", responses=_problems)
+def get_report(report_id: UUID, conn: TenantDb, user: Viewer) -> ReportDetail:
+    try:
+        return _detail(conn, report_id)
+    except ReportError as exc:
+        raise problem(exc) from None
+
+
+@router.post(
+    "/cases/{case_id}/str",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=_writes,
+    responses=_problems,
+    tags=["cases"],
+)
+def draft_str(case_id: UUID, conn: TenantDb, user: Drafter, ip: ClientIp) -> ReportDetail:
+    """Draft the case's suspicious transaction report, prefilled from the case."""
+    try:
+        report_id = service.draft_str(conn, user, case_id, now=now(), ip=ip)
+        return _detail(conn, report_id)
+    except ReportError as exc:
+        raise problem(exc) from None
+
+
+@router.post("/reports/ctr-runs", dependencies=_writes, responses=_problems)
+def draft_ctrs(body: CtrRunIn, conn: TenantDb, user: Drafter, ip: ClientIp) -> CtrRunOut:
+    """Draft a CTR for each settled cash transaction in the period at or above the threshold.
+
+    Transactions already on a CTR are skipped, so a run can repeat safely. At most
+    500 drafts are made per run.
+    """
+    try:
+        ids, more = service.draft_ctrs(
+            conn, user, date_from=body.date_from, date_to=body.date_to, now=now(), ip=ip
+        )
+        drafted = [report_out(service.get(conn, report_id)) for report_id in ids]
+    except ReportError as exc:
+        raise problem(exc) from None
+    return CtrRunOut(drafted=drafted, more=more)
+
+
+@router.patch("/reports/{report_id}", dependencies=_writes, responses=_problems)
+def edit_report(
+    report_id: UUID, body: ReportEdit, conn: TenantDb, user: Drafter, ip: ClientIp
+) -> ReportDetail:
+    """Edit a draft's narrative or content. Approved and submitted reports are fixed."""
+    try:
+        service.update_draft(
+            conn, user, report_id, narrative=body.narrative, content=body.content, now=now(), ip=ip
+        )
+        return _detail(conn, report_id)
+    except ReportError as exc:
+        raise problem(exc) from None
+
+
+@router.get("/ctr-threshold", responses=_problems)
+def get_ctr_threshold(conn: TenantDb, user: Viewer) -> CtrThreshold:
+    return CtrThreshold.model_validate(service.ctr_threshold(conn, now()))
+
+
+@router.put("/ctr-threshold", dependencies=_writes, responses=_problems)
+def set_ctr_threshold(
+    body: CtrThresholdIn, conn: TenantDb, user: Admin, ip: ClientIp
+) -> CtrThreshold:
+    """Set the CTR threshold per customer type, in kobo; the change is versioned."""
+    try:
+        value = service.set_ctr_threshold(
+            conn,
+            user,
+            individual_minor=body.individual_minor,
+            business_minor=body.business_minor,
+            rationale=body.rationale,
+            now=now(),
+            ip=ip,
+        )
+    except ReportError as exc:
+        raise problem(exc) from None
+    return CtrThreshold.model_validate(value)

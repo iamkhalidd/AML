@@ -307,10 +307,25 @@ single open alert until it is closed. Each alert keeps a timeline in `alert_even
 (`created`, `evidence_added`, ...), and the audit store records the same changes
 (`alert.created`, `alert.evidence_added`).
 
+## Alert queue (ALT-1, ALT-3)
+
+`GET /v1/alerts` lists alerts most severe first, then oldest first. Filter by `status`,
+`severity`, `rule_id`, `rule_type`, `assignee` (a user ID, `me` or `none`), `customer_id`,
+`created_from`/`created_to`, and `q` (customer name or ID). `sort` takes `severity`,
+`created_at`, `status`, `customer`, `rule`, `amount` or `assignee`, with `-` for
+descending. Pages hold 50 alerts; pass `next_cursor` back as `cursor` for the next one. The
+response carries the queue's counts: open, mine and overdue (null until review service
+standards exist).
+
+`POST /v1/alerts/{id}/claim` assigns an alert to the caller and `POST /v1/alerts/{id}/assign`
+with `{"assignee_id": ...}` assigns it to someone else, or unassigns it with `null`. The
+assignee must be an active user whose role works alerts, and a closed alert cannot be
+reassigned. Assigning an open alert puts it in review; unassigning puts it back to open.
+
 ## Stories awaiting tests
 
 Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1.
+have no tests yet: 3.1, 3.2.
 
 Checks, as CI runs them:
 

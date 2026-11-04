@@ -417,10 +417,23 @@ report filed (`reports.submit`). Each step records who and when, is audited
 (`report.approve`, `report.submit`), and appears on the case timeline for an STR. The
 report detail lists every approval request and its decision.
 
+## Dashboard (REP-4, REP-10)
+
+`GET /v1/dashboard?date_from=...&date_to=...` (default: the last 30 days) returns the
+management and effectiveness figures with the PRD's definitions: alerts created per 1,000
+transactions received, alerts by rule, false positive share (alerts closed with no
+suspicion over alerts closed), STR conversion rate (STRs submitted over cases closed),
+median investigation turnaround (case opening to approved closure), median time to first
+review and to close, case outcomes, reports drafted, approved and submitted by type, and
+open alerts and cases by age. Rates come with their numerator and denominator, and every
+figure is a query over the records, so it reconciles. An alert counts as closed with no
+suspicion when closed directly or with a case closed as `no_suspicion`. Durations are in
+seconds.
+
 ## Stories awaiting tests
 
 Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2.
+have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 5.3.
 
 Checks, as CI runs them:
 

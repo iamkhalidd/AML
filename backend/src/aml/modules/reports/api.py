@@ -5,7 +5,7 @@ format is confirmed. A second person approves a report through
 ``/v1/approvals/{id}/approve``; then it can be marked submitted.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -17,7 +17,7 @@ from aml.modules.access.permissions import Permission
 from aml.modules.access.service import User
 from aml.modules.alerts.api import UserRef
 from aml.modules.cases.api import CustomerRef
-from aml.modules.reports import service, workflow
+from aml.modules.reports import dashboard, service, workflow
 from aml.modules.reports.service import Filters, ReportError
 from aml.problems import ProblemBody, ProblemError
 
@@ -354,3 +354,99 @@ def mark_submitted(
         return _detail(conn, report_id)
     except ReportError as exc:
         raise problem(exc) from None
+
+
+class RuleAlerts(BaseModel):
+    rule_id: UUID
+    rule_name: str
+    rule_type: str
+    created: int
+    closed: int
+    no_suspicion: int
+
+
+class AlertMetrics(BaseModel):
+    created: int
+    transactions_received: int
+    per_1000_transactions: float | None = Field(description="Alerts created per 1,000 received")
+    closed: int
+    closed_no_suspicion: int
+    auto_closed: int
+    false_positive_share: float | None = Field(description="closed_no_suspicion / closed")
+    median_time_to_first_review: float | None = Field(description="Seconds")
+    reviewed: int = Field(description="Alerts created in the period that a person has acted on")
+    median_time_to_close: float | None = Field(description="Seconds")
+    by_rule: list[RuleAlerts]
+
+
+class CaseOutcomes(BaseModel):
+    no_suspicion: int
+    reported: int
+    referred: int
+
+
+class CaseMetrics(BaseModel):
+    opened: int
+    closed: int
+    outcomes: CaseOutcomes
+    median_investigation_turnaround: float | None = Field(
+        description="Seconds from opening to approved closure"
+    )
+
+
+class ReportCounts(BaseModel):
+    report_type: ReportType
+    drafted: int
+    approved: int
+    submitted: int
+    outstanding: int = Field(description="Not yet submitted, whenever drafted")
+
+
+class StrConversion(BaseModel):
+    strs_submitted: int
+    cases_closed: int
+    rate: float | None = Field(description="strs_submitted / cases_closed")
+
+
+class AgeBucket(BaseModel):
+    bucket: Literal["0-2", "3-7", "8-30", "31+"] = Field(description="Age in days")
+    count: int
+
+
+class Ageing(BaseModel):
+    alerts: list[AgeBucket]
+    cases: list[AgeBucket]
+
+
+class Dashboard(BaseModel):
+    date_from: datetime
+    date_to: datetime
+    generated_at: datetime
+    alerts: AlertMetrics
+    cases: CaseMetrics
+    reports: list[ReportCounts]
+    str_conversion: StrConversion
+    ageing: Ageing = Field(description="Open alerts and cases now, by age")
+
+
+@router.get("/dashboard", responses=_problems, tags=["dashboard"])
+def get_dashboard(
+    conn: TenantDb,
+    user: Viewer,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+) -> Dashboard:
+    """Management and effectiveness figures for a period, by default the last 30 days.
+
+    Every rate comes with its numerator and denominator so it reconciles to the records.
+    """
+    current = now()
+    end = date_to or current
+    start = date_from or end - timedelta(days=30)
+    if start >= end:
+        raise ProblemError(400, "PERIOD_INVALID", "The period must end after it starts")
+    if end - start > timedelta(days=366):
+        raise ProblemError(400, "PERIOD_INVALID", "The period can be at most a year")
+    return Dashboard.model_validate(
+        dashboard.build(conn, date_from=start, date_to=end, now=current)
+    )

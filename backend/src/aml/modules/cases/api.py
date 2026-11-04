@@ -1,7 +1,8 @@
-"""Cases: escalation, the case list and workspace, notes and corrections (CAS-1 to CAS-5).
+"""Cases: escalation, workspace, notes, corrections and closure (CAS-1 to CAS-5).
 
 Writes need the CSRF header. A case timeline never changes; to fix an entry, post a
-correction that names it.
+correction that names it. Closing is a request that a second person approves through
+``/v1/approvals/{id}/approve``.
 """
 
 from datetime import datetime
@@ -16,7 +17,7 @@ from aml.modules.access.permissions import Permission
 from aml.modules.access.service import User
 from aml.modules.alerts.api import CustomerView, UserRef, customer_view_out
 from aml.modules.alerts.queue import AlertError
-from aml.modules.cases import service
+from aml.modules.cases import closure, service
 from aml.modules.cases.service import CaseError, Filters
 from aml.problems import ProblemBody, ProblemError
 
@@ -41,6 +42,7 @@ _writes = [Depends(require_csrf)]
 
 Viewer = Annotated[User, Depends(require(Permission.CASES_VIEW))]
 Worker = Annotated[User, Depends(require(Permission.CASES_WORK))]
+Closer = Annotated[User, Depends(require(Permission.CASES_REQUEST_CLOSURE))]
 CaseStatus = Literal["open", "closed"]
 Outcome = Literal["no_suspicion", "reported", "referred"]
 Severity = Literal["low", "medium", "high"]
@@ -94,6 +96,21 @@ class NoteIn(BaseModel):
     corrects: int | None = Field(
         default=None, description="The timeline entry this corrects; it stays as it was"
     )
+
+
+class CloseIn(BaseModel):
+    outcome: Outcome = Field(
+        description="no_suspicion, reported (closed with a report) or referred"
+    )
+    reason: str = Field(min_length=1, max_length=5000, description="Why the case closes")
+
+
+class ClosureRequested(BaseModel):
+    approval_id: UUID
+    status: str
+    outcome: Outcome
+    reason: str
+    requested_at: datetime
 
 
 class AssignIn(BaseModel):
@@ -318,3 +335,28 @@ def claim_case(case_id: UUID, conn: TenantDb, user: Worker, ip: ClientIp) -> Cas
     except CaseError as exc:
         raise problem(exc) from None
     return case_out(row)
+
+
+@router.post(
+    "/cases/{case_id}/closure-request",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=_writes,
+    responses=_problems,
+)
+def request_closure(
+    case_id: UUID, body: CloseIn, conn: TenantDb, user: Closer, ip: ClientIp
+) -> ClosureRequested:
+    """Ask to close the case with an outcome and reason; a second person approves it."""
+    try:
+        approval = closure.request_closure(
+            conn, user, case_id, outcome=body.outcome, reason=body.reason, now=now(), ip=ip
+        )
+    except CaseError as exc:
+        raise problem(exc) from None
+    return ClosureRequested(
+        approval_id=approval.id,
+        status=approval.status,
+        outcome=body.outcome,
+        reason=approval.payload["reason"],
+        requested_at=approval.created_at,
+    )

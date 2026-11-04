@@ -129,7 +129,7 @@ def _listed(conn: psycopg.Connection, case_id: Any) -> dict[str, Any]:
     return row
 
 
-def _entry(
+def add_entry(
     conn: psycopg.Connection,
     case_id: Any,
     entry_type: str,
@@ -150,7 +150,7 @@ def _entry(
     return int(row[0])
 
 
-def _lock_open(conn: psycopg.Connection, case_id: Any) -> tuple[Any, Any]:
+def lock_open(conn: psycopg.Connection, case_id: Any) -> tuple[Any, Any]:
     row = conn.execute(
         "SELECT status::text, customer_id, assigned_to FROM aml_case WHERE id = %s FOR UPDATE",
         (case_id,),
@@ -249,10 +249,10 @@ def escalate(
         assert case_row is not None  # noqa: S101 - INSERT ... RETURNING
         case_id, reference = case_row
         ids = _take_alerts(conn, user, case_id, customer_id, alert_ids, now, ip)
-        _entry(conn, case_id, "opened", now, user.id,
+        add_entry(conn, case_id, "opened", now, user.id,
                detail={"reference": reference, "title": title, "alert_ids": ids})  # fmt: skip
         if note and note.strip():
-            _entry(conn, case_id, "note", now, user.id, body=note.strip())
+            add_entry(conn, case_id, "note", now, user.id, body=note.strip())
         store.record(
             conn,
             "case.open",
@@ -282,9 +282,9 @@ def link_alerts(
 ) -> dict[str, Any]:
     """Add more of the customer's alerts to an open case."""
     with conn.transaction():
-        customer_id, _ = _lock_open(conn, case_id)
+        customer_id, _ = lock_open(conn, case_id)
         ids = _take_alerts(conn, user, case_id, customer_id, alert_ids, now, ip)
-        _entry(conn, case_id, "alerts_linked", now, user.id, detail={"alert_ids": ids})
+        add_entry(conn, case_id, "alerts_linked", now, user.id, detail={"alert_ids": ids})
         store.record(
             conn,
             "case.link_alerts",
@@ -312,7 +312,7 @@ def add_note(
     if not text:
         raise CaseError("TEXT_REQUIRED", "A note needs text")
     with conn.transaction():
-        _lock_open(conn, case_id)
+        lock_open(conn, case_id)
         if corrects is not None:
             target = conn.execute(
                 "SELECT 1 FROM case_entry WHERE id = %s AND case_id = %s", (corrects, case_id)
@@ -320,7 +320,7 @@ def add_note(
             if target is None:
                 raise CaseError("ENTRY_NOT_FOUND", "This case has no entry with that ID")
         entry_type = "note" if corrects is None else "correction"
-        entry_id = _entry(conn, case_id, entry_type, now, user.id, body=text, corrects=corrects)
+        entry_id = add_entry(conn, case_id, entry_type, now, user.id, body=text, corrects=corrects)
         store.record(
             conn,
             f"case.{entry_type}",
@@ -352,7 +352,7 @@ def assign(
     ip: str | None = None,
 ) -> dict[str, Any]:
     with conn.transaction():
-        _, holder = _lock_open(conn, case_id)
+        _, holder = lock_open(conn, case_id)
         if assignee_id is not None:
             row = conn.execute(
                 "SELECT role::text, status FROM app_user WHERE id = %s", (assignee_id,)
@@ -369,7 +369,7 @@ def assign(
                 "before": None if holder is None else str(holder),
                 "after": None if assignee_id is None else str(assignee_id),
             }
-            _entry(conn, case_id, "assigned", now, user.id, detail=change)
+            add_entry(conn, case_id, "assigned", now, user.id, detail=change)
             store.record(
                 conn,
                 "case.assign",

@@ -365,10 +365,22 @@ a note, and with `"corrects": <entry id>` adds a correction that names the earli
 `POST /v1/cases/{id}/claim` and `/assign` set who holds the case. A closed case cannot
 change. Each change is audited (`case.open`, `case.note`, `case.correction`, ...).
 
+## Closing cases (CAS-3, CAS-4)
+
+`POST /v1/cases/{id}/closure-request` with `{"outcome": ..., "reason": ...}` asks to close a
+case. The outcome is `no_suspicion`, `reported` (closed with a report) or `referred`, and
+the written reason is required. The request goes to the approval queue (`case_closure`)
+and the timeline gets a `closure_requested` entry; the case stays open meanwhile. A second
+person with the right to approve closes it through `POST /v1/approvals/{id}/approve`. The
+requester cannot approve their own request, and neither can the investigator holding the
+case. Approval closes the case and its escalated alerts together and is audited
+(`case.close`); rejection or withdrawal leaves the case open. The workspace lists every
+closure request and its decision.
+
 ## Stories awaiting tests
 
 Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1.
+have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2.
 
 Checks, as CI runs them:
 

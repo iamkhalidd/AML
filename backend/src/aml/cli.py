@@ -104,8 +104,11 @@ def _parser() -> argparse.ArgumentParser:
         help="daily job: verify each audit hash chain, record its digest, add partitions",
     )
     verify.add_argument("slugs", nargs="*", help="tenants to check (default: every active one)")
-    work = commands.add_parser("worker", help="work one job lane for every active tenant")
-    work.add_argument("--lane", required=True, choices=jobs.LANES)
+    work = commands.add_parser("worker", help="work job lanes for every active tenant")
+    work.add_argument(
+        "--lane", required=True, choices=(*jobs.LANES, "all"),
+        help="one lane, or 'all' to work every lane in turn from one process",
+    )  # fmt: skip
     work.add_argument("--once", action="store_true", help="one pass, then exit")
     demo_cmd = commands.add_parser("demo", help="synthetic data and a demonstration tenant")
     demo_commands = demo_cmd.add_subparsers(dest="demo_command", required=True)
@@ -247,7 +250,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             intact = _print_checks(check_fleet(fleet, args.slugs))
             return 0 if intact else 1
         elif args.command == "worker":
-            worker.run(fleet, args.lane, once=args.once)
+            lanes = jobs.LANES if args.lane == "all" else (args.lane,)
+            worker.run(fleet, *lanes, once=args.once)
         elif args.command == "demo":
             _demo(fleet, settings, args)
     except (TenantError, AccessError, CredentialError) as exc:

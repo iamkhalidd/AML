@@ -50,12 +50,18 @@ def work_fleet(fleet: Fleet, lane: str, worker: str, now: datetime | None = None
     return ran
 
 
-def run(fleet: Fleet, lane: str, *, once: bool = False, idle_seconds: float = 2.0) -> None:
-    if lane not in jobs.LANES:
-        raise ValueError(f"Unknown lane {lane!r}")
-    worker = f"{socket.gethostname()}:{lane}"
+def run(fleet: Fleet, *lanes: str, once: bool = False, idle_seconds: float = 2.0) -> None:
+    """Work ``lanes`` in turn until stopped.
+
+    Several lanes in one process suit a small host (one free-tier instance); a busy
+    deployment runs a process per lane so a heavy report never holds up evaluation.
+    """
+    unknown = [lane for lane in lanes if lane not in jobs.LANES]
+    if not lanes or unknown:
+        raise ValueError(f"Unknown lane {unknown[0] if unknown else ''!r}")
+    host = socket.gethostname()
     while True:
-        ran = work_fleet(fleet, lane, worker)
+        ran = sum(work_fleet(fleet, lane, f"{host}:{lane}") for lane in lanes)
         if once:
             return
         if not ran:

@@ -330,7 +330,7 @@ the linked transactions; notes; the full timeline; and the closure once closed. 
 `customer_view` is the unified customer view: KYC status and date, risk, PEP flag,
 declared against actual activity (successful credits in the last 30 days), beneficial
 owners, accounts and up to 20 earlier alerts. `GET /v1/customers/{id}/view` returns the same
-view on its own. Earlier cases join the view once cases are built.
+view on its own, with the customer's cases.
 
 `POST /v1/alerts/{id}/notes` with `{"text": ...}` adds a note. Notes are timeline entries
 and are never edited; each is also recorded in the audit store (`alert.note_added`).
@@ -346,10 +346,29 @@ alert cannot be closed again or reassigned, and an escalated alert closes with i
 Closing writes a `closed` timeline entry and an `alert.close` audit entry, and frees the
 customer and window for a new alert.
 
+## Cases (CAS-1, CAS-2, CAS-5)
+
+`POST /v1/cases` with `{"alert_ids": [...], "title": ..., "note": ...}` opens a case from one
+or more open alerts of one customer; the caller holds it. The alerts become `escalated`,
+leave the alert queue and keep their explanations, which the case shows. An alert belongs
+to one case only. `POST /v1/cases/{id}/alerts` adds more of the customer's alerts.
+
+`GET /v1/cases` lists cases, open first and then oldest first, filtered by `status`,
+`assignee` (`me`, `none` or a user ID), `customer_id` and `q` (reference, title or
+customer). `GET /v1/cases/{id}` is the workspace: the case, its alerts with their
+explanations, the timeline, closure requests and the unified customer view.
+
+The timeline (`case_entry`) lists everything in time order with author and time: opened,
+alerts linked, notes, corrections, assignments. Entries are never changed: a database
+trigger refuses updates and deletes. `POST /v1/cases/{id}/notes` with `{"text": ...}` adds
+a note, and with `"corrects": <entry id>` adds a correction that names the earlier entry.
+`POST /v1/cases/{id}/claim` and `/assign` set who holds the case. A closed case cannot
+change. Each change is audited (`case.open`, `case.note`, `case.correction`, ...).
+
 ## Stories awaiting tests
 
 Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1, 3.2, 3.3, 3.4.
+have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1.
 
 Checks, as CI runs them:
 

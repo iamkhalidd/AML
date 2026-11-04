@@ -207,6 +207,16 @@ class EarlierAlert(BaseModel):
     closure_reason: str | None
 
 
+class CaseRef(BaseModel):
+    id: UUID
+    reference: str
+    title: str
+    status: Literal["open", "closed"]
+    outcome: Literal["no_suspicion", "reported", "referred"] | None
+    opened_at: datetime
+    closed_at: datetime | None
+
+
 class CustomerProfile(BaseModel):
     id: UUID
     source_system: str
@@ -248,6 +258,7 @@ class CustomerView(BaseModel):
     beneficial_owners: list[OwnerOut]
     accounts: list[AccountOut]
     earlier_alerts: list[EarlierAlert]
+    cases: list[CaseRef]
 
 
 class AlertDetail(AlertOut):
@@ -404,6 +415,7 @@ def customer_view_out(view: dict[str, Any]) -> CustomerView:
         beneficial_owners=[OwnerOut.model_validate(r) for r in view["beneficial_owners"]],
         accounts=[AccountOut.model_validate(r) for r in view["accounts"]],
         earlier_alerts=[EarlierAlert.model_validate(r) for r in view["earlier_alerts"]],
+        cases=[CaseRef.model_validate(r) for r in view["cases"]],
     )
 
 

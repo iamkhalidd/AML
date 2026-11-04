@@ -2,8 +2,8 @@
 
 The detail answers "why did this fire and is it suspicious?" on one screen: the rule
 version and parameters that fired, the transactions behind it, the notes and timeline, and
-a customer panel with KYC, risk, PEP, expected against actual activity, owners, accounts
-and earlier alerts. Notes are timeline entries and are never edited.
+a customer panel with KYC, risk, PEP, expected against actual activity, owners, accounts,
+earlier alerts and cases. Notes are timeline entries and are never edited.
 """
 
 from datetime import datetime, timedelta
@@ -21,6 +21,7 @@ from aml.modules.audit import store
 # How far back "actual activity" looks, to set against the declared monthly figures.
 ACTIVITY_WINDOW = timedelta(days=30)
 EARLIER_ALERTS = 20
+EARLIER_CASES = 20
 
 
 def get_detail(conn: psycopg.Connection, alert_id: Any, *, now: datetime) -> dict[str, Any]:
@@ -106,6 +107,12 @@ def customer_view(
             " ORDER BY a.created_at DESC, a.id LIMIT %s",
             (customer_id, exclude_alert, EARLIER_ALERTS),
         ).fetchall()
+        cases = cur.execute(
+            "SELECT id, reference, title, status::text AS status, outcome::text AS outcome,"
+            " opened_at, closed_at FROM aml_case WHERE customer_id = %s"
+            " ORDER BY opened_at DESC, id LIMIT %s",
+            (customer_id, EARLIER_CASES),
+        ).fetchall()
     return {
         "customer": customer,
         "beneficial_owners": owners,
@@ -113,6 +120,7 @@ def customer_view(
         "actual_activity": actual,
         "activity_window_days": ACTIVITY_WINDOW.days,
         "earlier_alerts": earlier,
+        "cases": cases,
     }
 
 

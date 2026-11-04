@@ -1,4 +1,5 @@
-"""Operator command line: aml migrate | status | tenant | user | credential | audit | worker.
+"""Operator command line: aml migrate | status | tenant | user | credential | audit | worker
+| demo.
 
 Run from backend/ so .env is found. Every change is logged in the control plane with the
 operator's name, taken from AML_OPERATOR or the login name.
@@ -6,13 +7,15 @@ operator's name, taken from AML_OPERATOR or the login name.
 
 import argparse
 import getpass
+import json
 import os
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 import psycopg
 
-from aml import jobs, worker
+from aml import demo, jobs, worker
 from aml.config import Settings
 from aml.control.audit_check import AuditCheck, check_fleet
 from aml.control.secrets import SecretStore
@@ -104,6 +107,19 @@ def _parser() -> argparse.ArgumentParser:
     work = commands.add_parser("worker", help="work one job lane for every active tenant")
     work.add_argument("--lane", required=True, choices=jobs.LANES)
     work.add_argument("--once", action="store_true", help="one pass, then exit")
+    demo_cmd = commands.add_parser("demo", help="synthetic data and a demonstration tenant")
+    demo_commands = demo_cmd.add_subparsers(dest="demo_command", required=True)
+    generate = demo_commands.add_parser("generate", help="write synthetic feed files as JSON")
+    generate.add_argument("--out", type=Path, required=True, help="directory to write into")
+    load = demo_commands.add_parser(
+        "load", help="create a demonstration tenant with users, rules, data and alerts"
+    )
+    load.add_argument("slug", help="tenant (created if missing)")
+    load.add_argument("--name", default="Demonstration MFB", help="institution name")
+    for sub in (generate, load):
+        sub.add_argument("--seed", type=int, default=7)
+        sub.add_argument("--customers", type=int, default=60, help="ordinary customers")
+        sub.add_argument("--days", type=int, default=60, help="days of history (at least 45)")
     return parser
 
 
@@ -154,6 +170,38 @@ def _credential(fleet: Fleet, args: argparse.Namespace) -> None:
             print(f"{args.name}: revoked")
 
 
+def _demo(fleet: Fleet, settings: Settings, args: argparse.Namespace) -> None:
+    if args.days < 45:
+        raise TenantError("--days must be at least 45")
+    if args.demo_command == "generate":
+        data = demo.generate(seed=args.seed, customers=args.customers, days=args.days)
+        args.out.mkdir(parents=True, exist_ok=True)
+        for name in ("customers", "accounts", "transactions"):
+            records = getattr(data, name)
+            path = args.out / f"{name}.json"
+            path.write_text(json.dumps(records, indent=1), encoding="utf-8")
+            print(f"{path}: {len(records)} records")
+        for customer_id, rule in sorted(data.planted.items(), key=lambda item: item[1]):
+            print(f"{rule}: planted on {customer_id}")
+        return
+    if settings.mfa_key is None:
+        raise TenantError("AML_MFA_KEY must be set (run scripts/setup_local.py)")
+    result = demo.load(
+        fleet, SecretCipher(settings.mfa_key.get_secret_value()), args.slug, name=args.name,
+        seed=args.seed, customers=args.customers, days=args.days,
+    )  # fmt: skip
+    print(
+        f"{args.slug}: {result.customers} customers, {result.accounts} accounts,"
+        f" {result.transactions} transactions ({result.rejected} rejected), {result.alerts} alerts"
+    )
+    for customer_id, rule in sorted(result.planted.items(), key=lambda item: item[1]):
+        print(f"{rule}: planted on {customer_id}")
+    print("Demonstration users; the passwords and authenticator links are not shown again:")
+    for user in result.users:
+        print(f"  {user.email} ({user.role})  password {user.password}")
+        print(f"    {user.mfa_uri}")
+
+
 def _print_status(rows: list[DatabaseStatus]) -> None:
     for row in rows:
         marker = "" if row.current == row.head else "  <- behind"
@@ -200,6 +248,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0 if intact else 1
         elif args.command == "worker":
             worker.run(fleet, args.lane, once=args.once)
+        elif args.command == "demo":
+            _demo(fleet, settings, args)
     except (TenantError, AccessError, CredentialError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

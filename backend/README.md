@@ -482,10 +482,32 @@ what changed (before and after) and from which address; pass `next_before_seq` b
 recorded, for the search form. The view only reads; the database still refuses any change
 to an entry.
 
+## Demonstration tenant and synthetic data
+
+`uv run aml demo generate --out demo-data` writes `customers.json`, `accounts.json` and
+`transactions.json` in the ingestion contract's shape. The data is the same every time for
+the same `--seed`. Every name is invented and every ID starts with `DEMO-`. Most customers
+have ordinary salary, purchase and sales activity. One customer per starter rule is planted
+to trip that rule: R01 high-value cash, R02 structuring, R03 pass-through, R04 dormant
+surge, R05 velocity spike and R13 new-account activity. The command lists which customer
+carries which case.
+
+`uv run aml demo load demo` builds a demonstration tenant, creating it first if it does not
+exist, and refuses to run in production. It:
+
+- creates an analyst and a compliance officer and prints their passwords and authenticator
+  links once;
+- has the analyst propose the starter rules and the officer approve them;
+- ingests the data through the normal pipeline;
+- evaluates every scheduled window over the period, so the alert queue is ready to show.
+
+It refuses a tenant that already holds demonstration data. `--customers` and `--days` set
+the size (at least 45 days).
+
 ## Stories awaiting tests
 
 Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 5.3, 6.1, 6.2, 6.3, 7.1.
+have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 5.3, 6.1, 6.2, 6.3, 7.1, 7.3.
 
 Checks, as CI runs them:
 

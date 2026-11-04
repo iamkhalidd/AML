@@ -7,7 +7,7 @@ import type { AlertDetail, Case, ClosureReason } from '@/api/types'
 import StatusBadge from '@/components/StatusBadge.vue'
 import CustomerPanel from '@/components/CustomerPanel.vue'
 import ActivityTimeline, { type TimelineItem } from '@/components/ActivityTimeline.vue'
-import { formatDateTime, formatMoney, formatValue, humanize } from '@/format'
+import { fieldLabel, formatDateTime, formatField, formatMoney, formatValue, humanize } from '@/format'
 import { useSession } from '@/stores/session'
 
 const props = defineProps<{ id: string }>()
@@ -189,8 +189,8 @@ async function escalate() {
               <p class="explain">{{ alert.explanation }}</p>
               <dl v-if="Object.keys(alert.trigger_values).length" class="facts">
                 <template v-for="(value, key) in alert.trigger_values" :key="key">
-                  <dt>{{ humanize(String(key)) }}</dt>
-                  <dd>{{ formatValue(value) }}</dd>
+                  <dt>{{ fieldLabel(String(key)) }}</dt>
+                  <dd>{{ formatField(String(key), value, alert.amount?.currency ?? null) }}</dd>
                 </template>
               </dl>
               <details class="rule">
@@ -200,8 +200,8 @@ async function escalate() {
                 <p>{{ alert.rule_detail.rationale }}</p>
                 <dl class="facts">
                   <template v-for="(value, key) in alert.rule_detail.parameters" :key="key">
-                    <dt>{{ humanize(String(key)) }}</dt>
-                    <dd>{{ formatValue(value) }}</dd>
+                    <dt>{{ fieldLabel(String(key)) }}</dt>
+                    <dd>{{ formatField(String(key), value, alert.amount?.currency ?? null) }}</dd>
                   </template>
                 </dl>
               </details>

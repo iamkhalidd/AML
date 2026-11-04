@@ -63,6 +63,37 @@ export function humanize(code: string | null | undefined): string {
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
+/**
+ * Trigger values and rule parameters that hold money in minor units. Mirrors MONEY in the
+ * backend's rules/explain.py; parameters say so in their name (min_value_minor).
+ */
+const MONEY_KEYS = new Set([
+  'amount',
+  'threshold',
+  'total',
+  'low',
+  'high',
+  'credit',
+  'debit',
+  'average_amount',
+])
+
+export function isMoneyKey(key: string): boolean {
+  return MONEY_KEYS.has(key) || key.endsWith('_minor')
+}
+
+/** A label for a trigger value or parameter key: min_value_minor -> Min value. */
+export function fieldLabel(key: string): string {
+  return humanize(key.replace(/_minor$/, ''))
+}
+
+/** A trigger value or rule parameter, shown as money when the key says it is money. */
+export function formatField(key: string, value: unknown, currency: string | null = 'NGN'): string {
+  if (typeof value === 'number' && isMoneyKey(key)) return formatMoney(value, currency)
+  if (typeof value === 'number' && key.endsWith('percent')) return `${value}%`
+  return formatValue(value)
+}
+
 export function formatValue(value: unknown): string {
   if (value === null || value === undefined) return '—'
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'

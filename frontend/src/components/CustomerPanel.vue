@@ -1,11 +1,25 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import type { CustomerView } from '@/api/types'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { formatDate, formatMoney, humanize } from '@/format'
 
-defineProps<{ view: CustomerView; currentAlertId?: string }>()
+const props = defineProps<{ view: CustomerView; currentAlertId?: string }>()
+
+function credits(count: number): string {
+  return `${count.toLocaleString('en-NG')} ${count === 1 ? 'credit' : 'credits'}`
+}
+
+/** Actual credits against the declared monthly figure, scaled to the activity window. */
+const ratio = computed(() => {
+  const expected = props.view.expected_activity.monthly_credit
+  const actual = props.view.actual_activity.find((row) => row.currency === 'NGN')?.credit_total
+  if (!expected || !actual) return null
+  const value = actual / ((expected * props.view.activity_window_days) / 30)
+  return value >= 1.1 ? Math.round(value * 10) / 10 : null
+})
 </script>
 
 <template>
@@ -47,16 +61,21 @@ defineProps<{ view: CustomerView; currentAlertId?: string }>()
       <div>
         <h3>Expected vs actual</h3>
         <dl class="facts compact">
-          <dt>Declared monthly credit</dt>
-          <dd class="num-left">{{ formatMoney(view.expected_activity.monthly_credit) }}</dd>
-          <template v-for="row in view.actual_activity" :key="row.currency">
-            <dt>Credits, last {{ view.activity_window_days }} days</dt>
-            <dd class="num-left">
-              {{ formatMoney(row.credit_total, row.currency) }}
-              <span class="muted">({{ row.credit_count }})</span>
-            </dd>
-          </template>
+          <dt>Expected credits a month</dt>
+          <dd class="num-left">
+            {{ formatMoney(view.expected_activity.monthly_credit) }}
+            <div v-if="view.expected_activity.monthly_credit_count !== null" class="muted small">
+              {{ credits(view.expected_activity.monthly_credit_count) }}
+            </div>
+          </dd>
+          <dt>Credits received, last {{ view.activity_window_days }} days</dt>
+          <dd v-if="!view.actual_activity.length" class="num-left">{{ formatMoney(0) }}</dd>
+          <dd v-for="row in view.actual_activity" :key="row.currency" class="num-left">
+            {{ formatMoney(row.credit_total, row.currency) }}
+            <div class="muted small">{{ credits(row.credit_count) }}</div>
+          </dd>
         </dl>
+        <p v-if="ratio" class="ratio" :class="{ over: ratio >= 2 }">{{ ratio }}× what was expected</p>
       </div>
 
       <div v-if="view.beneficial_owners.length">
@@ -148,6 +167,21 @@ defineProps<{ view: CustomerView; currentAlertId?: string }>()
 .num-left {
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+.small {
+  font-size: 12px;
+}
+
+.ratio {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.ratio.over {
+  color: var(--danger);
+  font-weight: 600;
 }
 
 .plain {

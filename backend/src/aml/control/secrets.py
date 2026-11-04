@@ -3,6 +3,9 @@
 First releases keep secrets in files readable only by the service account (infrastructure
 plan); the directory is encrypted at rest on the host. Replace with a secrets manager once
 there are more than a few tenants.
+
+Hosts without a lasting disk (Render's free tier) set ``AML_TENANT_DB_<SLUG>`` instead:
+an environment variable of that name wins over the file.
 """
 
 import os
@@ -23,7 +26,14 @@ class SecretStore:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(value)
 
+    @staticmethod
+    def env_name(name: str) -> str:
+        return f"AML_TENANT_DB_{name.upper()}"
+
     def get(self, name: str) -> str:
+        from_env = os.environ.get(self.env_name(name))
+        if from_env:
+            return from_env
         try:
             return self._path(name).read_text(encoding="utf-8")
         except FileNotFoundError:

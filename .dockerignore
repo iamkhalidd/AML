@@ -12,5 +12,6 @@
 frontend/dist
 .git
 deploy
+!deploy/render/start.sh
 *.md
 !backend/README.md

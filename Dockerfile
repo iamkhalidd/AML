@@ -22,6 +22,7 @@ RUN groupadd --system aml && useradd --system --gid aml --no-create-home aml    
 WORKDIR /app
 COPY --from=backend /app/.venv /app/.venv
 COPY --from=frontend /build/dist /app/static
+COPY --chmod=0755 deploy/render/start.sh /app/start.sh
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     AML_STATIC_DIR=/app/static     AML_SECRETS_DIR=/var/lib/aml/secrets

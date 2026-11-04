@@ -460,10 +460,21 @@ Set `AML_SMTP_HOST`, `AML_SMTP_PORT` (587), `AML_SMTP_USERNAME`, `AML_SMTP_PASSW
 `AML_SMTP_STARTTLS` (true) and `AML_MAIL_FROM`; without a host, emails are only logged.
 `AML_APP_URL` adds links to the web app.
 
+## Manual customer risk rating (CUS-2)
+
+`POST /v1/customers/{id}/risk-ratings` with `risk_level` (low, medium, high) and a
+`rationale` rates a customer (`customers.rate`: compliance officers and analysts); a
+rating without a rationale is refused. The rating is dated, audited
+(`customer.risk_rate`) and kept in an append-only history at `GET
+/v1/customers/{id}/risk-ratings`, each entry with the level it replaced. It overrides the
+feed's `risk_rating` everywhere, including alert severity, and later feed updates do not
+undo it. The customer view shows the rating in force, the feed's rating and when a person
+last rated the customer.
+
 ## Stories awaiting tests
 
 Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 5.3, 6.1, 6.2.
+have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 5.3, 6.1, 6.2, 6.3.
 
 Checks, as CI runs them:
 

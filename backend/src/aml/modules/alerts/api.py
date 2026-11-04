@@ -233,7 +233,11 @@ class CustomerProfile(BaseModel):
     kyc_status: str
     kyc_verified_at: datetime | None
     kyc_reference: str | None
-    risk_level: Severity | None
+    risk_level: Severity | None = Field(description="The rating in force")
+    feed_risk_level: Severity | None = Field(description="The rating the bank's feed sent")
+    manual_risk_rated_at: datetime | None = Field(
+        description="When a person last rated the customer; their rating wins"
+    )
     is_pep: bool
     segment: str | None
     status: str

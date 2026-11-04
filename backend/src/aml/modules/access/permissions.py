@@ -24,6 +24,7 @@ class Permission(StrEnum):
     REPORTS_APPROVE = "reports.approve"
     REPORTS_SUBMIT = "reports.submit"
     APPROVALS_VIEW = "approvals.view"
+    CUSTOMERS_RATE = "customers.rate"
     AUDIT_VIEW = "audit.view"
 
 
@@ -47,6 +48,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
         P.REPORTS_DRAFT,
         P.REPORTS_APPROVE,
         P.REPORTS_SUBMIT,
+        P.CUSTOMERS_RATE,
     },
     # Works alerts and cases and drafts reports; every decision goes to a checker.
     "analyst": frozenset(
@@ -61,6 +63,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             P.REPORTS_VIEW,
             P.REPORTS_DRAFT,
             P.APPROVALS_VIEW,
+            P.CUSTOMERS_RATE,
         }
     ),
     # Manages users, roles, approvers and settings; sees no customer data.

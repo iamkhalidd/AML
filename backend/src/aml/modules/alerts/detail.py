@@ -74,7 +74,9 @@ def customer_view(
             " declared_income_min, declared_income_max, expected_monthly_credit,"
             " expected_monthly_credit_count, state, country, onboarding_date,"
             " kyc_status::text AS kyc_status, kyc_verified_at, kyc_reference,"
-            " risk_level::text AS risk_level, is_pep, segment, status::text AS status,"
+            " coalesce(manual_risk_level, risk_level)::text AS risk_level,"
+            " risk_level::text AS feed_risk_level, manual_risk_rated_at,"
+            " is_pep, segment, status::text AS status,"
             " registration_number, registration_date, version, updated_at"
             " FROM customer WHERE id = %s",
             (customer_id,),

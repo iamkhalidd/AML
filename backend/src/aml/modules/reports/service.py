@@ -57,7 +57,8 @@ _LIST = """
 SELECT r.id, r.reference, r.report_type::text AS report_type, r.status::text AS status,
        r.case_id, k.reference AS case_reference,
        r.customer_id, c.external_id AS customer_external_id, c.full_name AS customer_name,
-       c.customer_type::text AS customer_type, c.risk_level::text AS customer_risk,
+       c.customer_type::text AS customer_type,
+       coalesce(c.manual_risk_level, c.risk_level)::text AS customer_risk,
        r.created_by, cb.full_name AS created_by_name, r.created_at,
        r.updated_by, ub.full_name AS updated_by_name, r.updated_at,
        r.approved_by, r.approved_at, r.submitted_by, r.submitted_at, r.submission_reference,
@@ -162,7 +163,8 @@ def _subject(conn: psycopg.Connection, customer_id: Any) -> dict[str, Any]:
         customer = cur.execute(
             "SELECT id, external_id, customer_type::text AS customer_type, full_name,"
             " date_of_birth, nationality, occupation, industry, state, country,"
-            " kyc_status::text AS kyc_status, kyc_reference, risk_level::text AS risk_level,"
+            " kyc_status::text AS kyc_status, kyc_reference,"
+            " coalesce(manual_risk_level, risk_level)::text AS risk_level,"
             " is_pep, registration_number, registration_date, onboarding_date, version"
             " FROM customer WHERE id = %s",
             (customer_id,),

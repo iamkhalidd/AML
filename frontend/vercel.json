@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "npm run build-only",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/v1/:path*", "destination": "https://aml-demo.onrender.com/v1/:path*" },
+    { "source": "/((?!v1/).*)", "destination": "/index.html" }
+  ]
+}

@@ -7,9 +7,10 @@ correction that names it. Closing is a request that a second person approves thr
 
 from datetime import datetime
 from typing import Annotated, Any, Literal
+from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Body, Depends, Query, Response, status
 from pydantic import BaseModel, Field
 
 from aml.modules.access.api import ClientIp, TenantDb, now, require, require_csrf
@@ -17,7 +18,7 @@ from aml.modules.access.permissions import Permission
 from aml.modules.access.service import User
 from aml.modules.alerts.api import CustomerView, UserRef, customer_view_out
 from aml.modules.alerts.queue import AlertError
-from aml.modules.cases import closure, service
+from aml.modules.cases import attachments, closure, service
 from aml.modules.cases.service import CaseError, Filters
 from aml.problems import ProblemBody, ProblemError
 
@@ -27,6 +28,10 @@ _STATUS_FOR_CODE = {
     "CASE_NOT_FOUND": 404,
     "ALERT_NOT_FOUND": 404,
     "ENTRY_NOT_FOUND": 404,
+    "ATTACHMENT_NOT_FOUND": 404,
+    "FILE_TOO_LARGE": 413,
+    "FILE_TYPE_REFUSED": 415,
+    "FILE_TYPE_MISMATCH": 415,
     "CUSTOMER_NOT_FOUND": 404,
     "PERMISSION_DENIED": 403,
     "CASE_CLOSED": 409,
@@ -36,7 +41,7 @@ _STATUS_FOR_CODE = {
     "APPROVAL_ALREADY_PENDING": 409,
 }
 _problems: dict[int | str, dict[str, object]] = {
-    code: {"model": ProblemBody} for code in (400, 401, 403, 404, 409)
+    code: {"model": ProblemBody} for code in (400, 401, 403, 404, 409, 413, 415)
 }
 _writes = [Depends(require_csrf)]
 
@@ -157,9 +162,20 @@ class ClosureRequest(BaseModel):
     decision_note: str | None
 
 
+class AttachmentOut(BaseModel):
+    id: UUID
+    filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    uploaded_by: UserRef
+    uploaded_at: datetime
+
+
 class CaseWorkspace(CaseOut):
     alerts: list[CaseAlert]
     timeline: list[EntryOut]
+    attachments: list[AttachmentOut]
     closure_requests: list[ClosureRequest]
     customer_view: CustomerView
 
@@ -205,6 +221,18 @@ def entry_out(row: dict[str, Any]) -> EntryOut:
         detail=row["detail"],
         corrects=row["corrects"],
         user=user,
+    )
+
+
+def attachment_out(row: dict[str, Any]) -> AttachmentOut:
+    return AttachmentOut(
+        id=row["id"],
+        filename=row["filename"],
+        content_type=row["content_type"],
+        size_bytes=row["size_bytes"],
+        sha256=row["sha256"],
+        uploaded_by=UserRef(id=row["uploaded_by"], name=row["uploaded_by_name"]),
+        uploaded_at=row["uploaded_at"],
     )
 
 
@@ -286,6 +314,7 @@ def get_case(case_id: UUID, conn: TenantDb, user: Viewer) -> CaseWorkspace:
         **case_out(found["case"]).model_dump(),
         alerts=[CaseAlert.model_validate(row) for row in found["alerts"]],
         timeline=[entry_out(row) for row in found["timeline"]],
+        attachments=[attachment_out(row) for row in attachments.list_for(conn, case_id)],
         closure_requests=[_closure_out(row) for row in found["closure_requests"]],
         customer_view=customer_view_out(found["customer"]),
     )
@@ -359,4 +388,53 @@ def request_closure(
         outcome=body.outcome,
         reason=approval.payload["reason"],
         requested_at=approval.created_at,
+    )
+
+
+@router.post(
+    "/cases/{case_id}/attachments",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=_writes,
+    responses=_problems,
+)
+def add_attachment(
+    case_id: UUID,
+    filename: Annotated[str, Query(min_length=1, max_length=attachments.MAX_FILENAME)],
+    conn: TenantDb,
+    user: Worker,
+    ip: ClientIp,
+    content: Annotated[bytes, Body(media_type="application/octet-stream")] = b"",
+) -> AttachmentOut:
+    """Attach a file to an open case. Send the file as the body; name it in ``filename``.
+
+    Accepted: PDF, PNG, JPEG, DOCX, XLSX, CSV and UTF-8 text, up to 10 MB. The file must
+    really be of the type its name says.
+    """
+    try:
+        row = attachments.add(conn, user, case_id, filename, content, now=now(), ip=ip)
+    except CaseError as exc:
+        raise problem(exc) from None
+    return attachment_out(row)
+
+
+@router.get(
+    "/cases/{case_id}/attachments/{attachment_id}",
+    responses=_problems | {200: {"content": {"application/octet-stream": {}}}},
+    response_class=Response,
+)
+def download_attachment(
+    case_id: UUID, attachment_id: UUID, conn: TenantDb, user: Viewer
+) -> Response:
+    try:
+        name, content_type, content = attachments.fetch(conn, case_id, attachment_id)
+    except CaseError as exc:
+        raise problem(exc) from None
+    return Response(
+        content,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        },
     )

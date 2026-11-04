@@ -377,10 +377,21 @@ case. Approval closes the case and its escalated alerts together and is audited
 (`case.close`); rejection or withdrawal leaves the case open. The workspace lists every
 closure request and its decision.
 
+## Case attachments (CAS-2)
+
+`POST /v1/cases/{id}/attachments?filename=statement.pdf` with the file as the body attaches
+it to an open case. Accepted types are PDF, PNG, JPEG, DOCX, XLSX, CSV and UTF-8 text, up to
+10 MB; the file's first bytes must match its type, so a renamed executable is refused with
+415 and an oversized file with 413. Files are stored in the database with their SHA-256,
+are never changed or removed, and appear in the workspace and on the timeline
+(`attachment_added`). `GET /v1/cases/{id}/attachments/{attachment_id}` downloads one.
+Malware scanning (CAS-6) is a pilot item. Storing files in Postgres keeps the backend free
+of a disk on Render; move them to object storage if volumes grow.
+
 ## Stories awaiting tests
 
 Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2.
+have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3.
 
 Checks, as CI runs them:
 

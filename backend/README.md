@@ -430,10 +430,24 @@ figure is a query over the records, so it reconciles. An alert counts as closed 
 suspicion when closed directly or with a case closed as `no_suspicion`. Durations are in
 seconds.
 
+## User administration and settings (ADM-1, ADM-2)
+
+Administrators (and compliance officers, who hold `users.manage`) list users with
+`GET /v1/users`, add one with `POST /v1/users`, change a role with
+`PUT /v1/users/{id}/role` and disable or re-enable an account with
+`PUT /v1/users/{id}/status`; each change needs a reason and is audited. A new user gets a
+one-time password and an authenticator enrolment link, returned once in the response.
+Permissions are checked on every request, so a role change applies on the user's next
+request; disabling also ends every open session. Nobody can change their own account, and
+the last active administrator cannot be demoted or disabled. `GET /v1/settings` shows each
+institution setting as now in effect (closure reasons, CTR threshold, fallback approver
+and the rest) with who set it and why, and `GET /v1/settings/{key}/versions` its history.
+The settings themselves are changed through their own endpoints, each versioned.
+
 ## Stories awaiting tests
 
 Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 5.3.
+have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 5.3, 6.1.
 
 Checks, as CI runs them:
 

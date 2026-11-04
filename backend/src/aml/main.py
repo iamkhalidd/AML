@@ -9,6 +9,7 @@ from aml.config import Settings, get_settings
 from aml.db import database_reachable
 from aml.modules.access import api as access_api
 from aml.modules.access import approvals_api
+from aml.modules.admin import api as admin_api
 from aml.modules.alerts import api as alerts_api
 from aml.modules.cases import api as cases_api
 from aml.modules.ingestion import api as ingestion_api
@@ -34,6 +35,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_problems(app)
     app.state.access = access_api.build_context(settings)
     app.include_router(access_api.router)
+    app.include_router(admin_api.router)
     app.include_router(approvals_api.router)
     app.include_router(alerts_api.router)
     app.include_router(cases_api.router)

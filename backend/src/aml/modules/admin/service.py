@@ -24,7 +24,7 @@ from aml.modules.access.service import ROLES, AccessError, User
 from aml.modules.audit import store
 
 _USER_SELECT = (
-    "id, email, full_name, role::text AS role, status, mfa_enabled, failed_logins,"
+    "SELECT id, email, full_name, role::text AS role, status, mfa_enabled, failed_logins,"
     " locked_until, created_at,"
     " (SELECT max(s.created_at) FROM app_session s WHERE s.user_id = app_user.id)"
     " AS last_sign_in FROM app_user"

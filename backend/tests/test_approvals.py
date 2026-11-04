@@ -45,6 +45,7 @@ EXPECTED: dict[str, dict[Permission, bool]] = {
         P.REPORTS_VIEW,
         P.REPORTS_DRAFT,
         P.APPROVALS_VIEW,
+        P.CUSTOMERS_RATE,
     ),
     "administrator": _only(P.USERS_MANAGE, P.SETTINGS_MANAGE),
     "auditor": _only(

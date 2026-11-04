@@ -504,10 +504,10 @@ exist, and refuses to run in production. It:
 It refuses a tenant that already holds demonstration data. `--customers` and `--days` set
 the size (at least 45 days).
 
-## Stories awaiting tests
+## Stories awaiting a database test run
 
-Testing is paused while the system is built. These stories pass lint and type checks but
-have no tests yet: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 5.3, 6.1, 6.2, 6.3, 7.1, 7.3.
+Stories 3.1 to 7.3 now have tests. Their pure-logic tests run anywhere; the rest need the
+local database from `scripts/setup_local.py` and have not yet been run against it.
 
 Checks, as CI runs them:
 

@@ -138,4 +138,4 @@ def test_user_administration_is_for_administrators(
     admin = signed_in(staff, fleet, tmp_path, "admin")
     response = admin.get("/v1/users")
     assert response.status_code == 200, response.text
-    assert signed_in(staff, fleet, tmp_path, "mlro").get("/v1/users").status_code == 403
+    assert signed_in(staff, fleet, tmp_path, "analyst").get("/v1/users").status_code == 403

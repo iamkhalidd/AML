@@ -243,6 +243,8 @@ def test_r05_velocity_spike_against_the_daily_average(
             "count": 1, "amount": 51_000_000, "period": "day", "multiple": 5.1, "days": 90,
             "average_count": 1.0, "average_amount": 10_000_000,
         }  # fmt: skip
+        # The evidence is the period's own transaction, not the history it was compared to.
+        assert len(findings[0].hit.txn_ids) == 1
 
 
 def test_r05_hourly_period(conn: psycopg.Connection, staff: Staff, findings: list[Finding]) -> None:
@@ -252,6 +254,7 @@ def test_r05_hourly_period(conn: psycopg.Connection, staff: Staff, findings: lis
     [finding] = findings
     assert finding.hit.trigger_values["period"] == "hour"
     assert finding.hit.window_end == DAY + timedelta(hours=1)
+    assert len(finding.hit.txn_ids) == 1
 
 
 def test_r05_skips_customers_with_too_little_history(

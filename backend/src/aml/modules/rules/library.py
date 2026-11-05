@@ -266,12 +266,13 @@ def velocity_spike(ctx: WindowContext) -> list[Hit]:
     rows = ctx.conn.execute(
         sql.SQL(
             "WITH active AS ("
-            "  SELECT t.customer_id, count(*) AS n, sum(t.amount) AS value"
+            "  SELECT t.customer_id, count(*) AS n, sum(t.amount) AS value,"
+            "    array_agg(t.id ORDER BY t.occurred_at, t.id) AS ids"
             "  FROM txn t JOIN customer c ON c.id = t.customer_id"
             "  WHERE t.status = 'success' AND t.occurred_at >= %(start)s"
             "    AND t.occurred_at < %(end)s AND {scope}"
             "  GROUP BY t.customer_id)"
-            " SELECT a.customer_id, a.n, a.value,"
+            " SELECT a.customer_id, a.n, a.value, a.ids,"
             "   (SELECT min(occurred_at) FROM txn h WHERE h.customer_id = a.customer_id"
             "     AND h.status = 'success'),"
             "   (SELECT count(*) FROM txn h WHERE h.customer_id = a.customer_id"
@@ -285,7 +286,7 @@ def velocity_spike(ctx: WindowContext) -> list[Hit]:
         {"start": start, "end": end, "since": since},
     ).fetchall()
     hits = []
-    for customer_id, count, value, first, past_count, past_value in rows:
+    for customer_id, count, value, txn_ids, first, past_count, past_value in rows:
         history = (start - first).days
         if history < p["min_history_days"]:
             ctx.skip(customer_id, f"{history} days of history, {p['min_history_days']} needed")
@@ -308,7 +309,7 @@ def velocity_spike(ctx: WindowContext) -> list[Hit]:
             "average_count": round(average_count, 4),
             "average_amount": round(average_value),
         }
-        hits.append(Hit(customer_id, values, (), None, start, end))
+        hits.append(Hit(customer_id, values, tuple(txn_ids), None, start, end))
     return hits
 
 

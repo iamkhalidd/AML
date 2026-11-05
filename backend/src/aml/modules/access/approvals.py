@@ -276,6 +276,21 @@ def set_fallback_approver(
     return int(version)
 
 
+def why_not_decide(user: User, approval: Approval, fallback: Any, holder: Any) -> str | None:
+    """Why ``user`` cannot decide on a pending change, in words; None when they can.
+
+    ``fallback`` is the named fallback approver. ``holder`` is the person the owning module
+    keeps away from the decision: whoever holds the case or drafted the report.
+    """
+    if approval.maker_id == user.id:
+        return "You asked for this, so someone else has to decide it."
+    if not (allowed(user.role, KINDS[approval.kind][1]) or user.id == fallback):
+        return "Your role cannot decide on this."
+    if holder is not None and holder == user.id:
+        return "You worked on this, so someone else has to decide it."
+    return None
+
+
 def _locked_pending(conn: psycopg.Connection, approval_id: Any) -> Approval:
     with conn.cursor(row_factory=dict_row) as cursor:
         row = cursor.execute(

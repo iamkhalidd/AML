@@ -382,7 +382,17 @@ def test_approval_endpoints_enforce_roles_and_maker_checker(
     assert me["permissions"] == granted("auditor")
 
     assert auditor.get("/v1/approvals?status=pending").json()[0]["id"] == str(request.id)
-    assert auditor.get(f"/v1/approvals/{request.id}").json()["status"] == "pending"
+    seen = auditor.get(f"/v1/approvals/{request.id}").json()
+    assert seen["status"] == "pending"
+    assert seen["maker_name"] == "analyst"
+    assert seen["subject_label"] == "rule-1"
+    assert seen["can_decide"] is False
+    assert seen["blocked_reason"] == "Your role cannot decide on this."
+    mine = analyst.get(f"/v1/approvals/{request.id}").json()
+    assert mine["can_decide"] is False
+    assert "someone else" in mine["blocked_reason"]
+    theirs = mlro.get(f"/v1/approvals/{request.id}").json()
+    assert (theirs["can_decide"], theirs["blocked_reason"]) == (True, None)
     denied = admin.get("/v1/approvals")
     assert (denied.status_code, denied.json()["code"]) == (403, "PERMISSION_DENIED")
     assert auditor.get(f"/v1/approvals/{T0.date()}").status_code == 400
@@ -398,10 +408,19 @@ def test_approval_endpoints_enforce_roles_and_maker_checker(
     done = mlro.post(f"/v1/approvals/{request.id}/approve", json={"note": "Agreed"})
     assert done.status_code == 200
     assert done.json()["checker_id"] == str(staff.users["mlro"].id)
+    assert done.json()["checker_name"] == "mlro"
+    assert done.json()["can_decide"] is False
     again = mlro.post(f"/v1/approvals/{request.id}/reject", json={"note": "no"})
     assert (again.status_code, again.json()["code"]) == (409, "APPROVAL_NOT_PENDING")
 
     other = submit(conn, staff.users["analyst"], subject="rule-9")
+    holder = staff.users["mlro"]
+    assert "worked on" in (approvals.why_not_decide(holder, other, None, holder.id) or "")
+    for kind in ("case_closure", "report_submission"):
+        unknown = submit(conn, staff.users["analyst"], subject=f"{kind}-1", kind=kind)
+        shown = mlro.get(f"/v1/approvals/{unknown.id}").json()
+        assert (shown["subject_label"], shown["can_decide"]) == (f"{kind}-1", True)
+
     not_maker = mlro.post(f"/v1/approvals/{other.id}/withdraw")
     assert (not_maker.status_code, not_maker.json()["code"]) == (403, "PERMISSION_DENIED")
     assert analyst.post(f"/v1/approvals/{other.id}/withdraw").json()["status"] == "withdrawn"

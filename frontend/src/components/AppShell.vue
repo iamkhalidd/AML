@@ -1,12 +1,23 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { RouterLink, RouterView, useRouter } from 'vue-router'
+import { computed, watch } from 'vue'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
 import { humanize } from '@/format'
+import { useApprovals } from '@/stores/approvals'
 import { useSession } from '@/stores/session'
 
 const session = useSession()
 const router = useRouter()
+const route = useRoute()
+const approvals = useApprovals()
+
+watch(
+  () => route.path,
+  () => {
+    if (session.can('approvals.view')) approvals.refresh()
+  },
+  { immediate: true },
+)
 
 const initials = computed(() =>
   (session.user?.full_name ?? '')
@@ -36,6 +47,12 @@ async function signOut() {
         </RouterLink>
         <RouterLink v-if="session.can('cases.view')" :to="{ name: 'cases' }" class="nav">
           Cases
+        </RouterLink>
+        <RouterLink v-if="session.can('approvals.view')" :to="{ name: 'approvals' }" class="nav">
+          Approvals
+          <span v-if="approvals.waiting" class="count">
+            {{ approvals.waiting }}<span class="sr-only"> waiting for you</span>
+          </span>
         </RouterLink>
       </nav>
       <div v-if="session.user" class="who">
@@ -97,6 +114,10 @@ nav {
 }
 
 .nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 8px 10px;
   border-radius: 6px;
   color: var(--ink-text);
@@ -107,6 +128,18 @@ nav {
 .nav:hover {
   background: var(--ink-2);
   color: #fff;
+}
+
+.count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
 }
 
 .nav.router-link-active {

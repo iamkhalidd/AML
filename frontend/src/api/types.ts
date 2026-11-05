@@ -242,3 +242,50 @@ export interface CaseWorkspace extends Case {
   }[]
   customer_view: CustomerView
 }
+
+export type ApprovalKind = 'case_closure' | 'report_submission' | 'rule_change'
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn'
+
+export interface Approval {
+  id: string
+  kind: ApprovalKind
+  subject_id: string
+  subject_label: string
+  payload: Record<string, unknown>
+  rationale: string
+  status: ApprovalStatus
+  maker_id: string
+  maker_name: string
+  created_at: string
+  checker_id: string | null
+  checker_name: string | null
+  decided_at: string | null
+  decision_note: string | null
+  can_decide: boolean
+  blocked_reason: string | null
+}
+
+export interface ReportForApproval {
+  id: string
+  reference: string
+  report_type: string
+  status: string
+  case_id: string | null
+  case_reference: string | null
+  customer: CustomerRef
+  created_by: UserRef
+  narrative: string
+  transactions: { id: string }[]
+}
+
+export interface RuleForApproval {
+  id: string
+  name: string
+  current_version: number | null
+  versions: {
+    version: number
+    parameters: Record<string, unknown>
+    severity: string
+    effective_from: string
+  }[]
+}

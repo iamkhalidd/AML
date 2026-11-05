@@ -226,6 +226,11 @@ function size(bytes: number): string {
                     <td>{{ r.reason }}</td>
                     <td>
                       <StatusBadge :value="r.status" kind="status" />
+                      <div v-if="session.can('approvals.view')">
+                        <RouterLink :to="{ name: 'approval', params: { id: r.approval_id } }">
+                          Open approval
+                        </RouterLink>
+                      </div>
                       <div v-if="r.decided_by" class="muted">{{ r.decided_by.name }}</div>
                       <div v-if="r.decision_note" class="muted">{{ r.decision_note }}</div>
                     </td>
